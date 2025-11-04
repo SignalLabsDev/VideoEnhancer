@@ -10,13 +10,6 @@ Enhance Twitch and YouTube playback with a one-click preset or fine-grained cust
 - **GPU-accelerated pipeline** – combines CSS contrast/saturation with an SVG `feConvolveMatrix` sharpen pass for real-time updates
 - **SPA aware** – MutationObserver keeps new/changed videos in sync on both platforms, including Twitch channel switches and YouTube navigation
 
-## Getting Started
-
-1. Open Chrome and visit `chrome://extensions/`
-2. Enable **Developer mode** (top-right toggle)
-3. Click **Load unpacked** and select this folder (`VideoSharpener`)
-4. Head to YouTube or Twitch; the **Video Enhancer** effect starts disabled, so use the toolbar icon when you’re ready
-
 ## Usage
 
 - Click the extension’s toolbar icon to toggle the control panel
@@ -29,4 +22,5 @@ Enhance Twitch and YouTube playback with a one-click preset or fine-grained cust
 - The floating panel can be dragged by its header; double-check positioning if you resize the window or use smaller viewports
 - Custom slider values persist; adjust the defaults in `contentScript.js` (see `PRESET_SETTINGS`) if you want a different starting point
 - For extreme sharpening levels, consider pairing with lower contrast to avoid halos on high-contrast footage
+
 
