@@ -16,19 +16,24 @@
   const PRESET_SETTINGS = Object.freeze({
     sharpen: 0.55,
     contrast: 1.1,
-    saturation: 1.15
+    saturation: 1.15,
+    brightness: 1.0,
+    gamma: 1.0
   });
 
   const DEFAULT_SETTINGS = Object.freeze({
     sharpen: PRESET_SETTINGS.sharpen,
     contrast: PRESET_SETTINGS.contrast,
-    saturation: PRESET_SETTINGS.saturation
+    saturation: PRESET_SETTINGS.saturation,
+    brightness: PRESET_SETTINGS.brightness,
+    gamma: PRESET_SETTINGS.gamma
   });
 
   const state = {
     enabled: false,
     panelVisible: false,
     activeTab: 'preset',
+    compatibilityMode: false,
     settings: { ...DEFAULT_SETTINGS },
     panelPosition: {
       useCustom: false,
@@ -70,15 +75,20 @@
   let convolveNode = null;
   let panelNode = null;
   let mainToggleButton = null;
+  let compatibilityToggleButton = null;
   const sliderInputs = {
     sharpen: null,
     contrast: null,
-    saturation: null
+    saturation: null,
+    brightness: null,
+    gamma: null
   };
   const sliderValueLabels = {
     sharpen: null,
     contrast: null,
-    saturation: null
+    saturation: null,
+    brightness: null,
+    gamma: null
   };
   let presetSummaryNode = null;
   const dragState = {
@@ -146,6 +156,7 @@
       enabled: state.enabled,
       panelVisible: state.panelVisible,
       activeTab: state.activeTab,
+      compatibilityMode: state.compatibilityMode,
       settings: { ...state.settings },
       panelPosition: { ...state.panelPosition }
     }
@@ -206,17 +217,22 @@
           if (snapshot.activeTab === 'custom' || snapshot.activeTab === 'preset') {
             state.activeTab = snapshot.activeTab;
           }
+          if (typeof snapshot.compatibilityMode === 'boolean') {
+            state.compatibilityMode = snapshot.compatibilityMode;
+          }
           const settingsSource = (snapshot.settings && typeof snapshot.settings === 'object')
             ? snapshot.settings
             : (snapshot.custom && typeof snapshot.custom === 'object' ? snapshot.custom : null);
 
           if (settingsSource) {
             const restoredSettings = { ...DEFAULT_SETTINGS };
-            ['sharpen', 'contrast', 'saturation'].forEach((key) => {
+            ['sharpen', 'contrast', 'saturation', 'brightness', 'gamma'].forEach((key) => {
               if (typeof settingsSource[key] === 'number') {
                 const value = settingsSource[key];
                 if (key === 'sharpen') {
                   restoredSettings[key] = Math.min(Math.max(value, 0), 1.5);
+                } else if (key === 'brightness' || key === 'gamma') {
+                  restoredSettings[key] = Math.min(Math.max(value, 0.5), 2);
                 } else {
                   restoredSettings[key] = Math.min(Math.max(value, 0.5), 2);
                 }
@@ -324,7 +340,18 @@
     if (!presetSummaryNode) {
       return;
     }
-    presetSummaryNode.textContent = `Sharpen ${formatPercent(state.settings.sharpen)} · Contrast ${formatDeltaPercent(state.settings.contrast)} · Saturation ${formatDeltaPercent(state.settings.saturation)}`;
+    const parts = [
+      `Sharpen ${formatPercent(state.settings.sharpen)}`,
+      `Contrast ${formatDeltaPercent(state.settings.contrast)}`,
+      `Saturation ${formatDeltaPercent(state.settings.saturation)}`
+    ];
+    if (state.settings.brightness !== 1) {
+      parts.push(`Brightness ${formatDeltaPercent(state.settings.brightness)}`);
+    }
+    if (state.settings.gamma !== 1) {
+      parts.push(`Gamma ${state.settings.gamma.toFixed(2)}`);
+    }
+    presetSummaryNode.textContent = parts.join(' · ');
   };
 
   const getCurrentSettings = () => state.settings;
@@ -347,6 +374,10 @@
       filterParts.push(originalFilter.trim());
     }
 
+    if (settings.brightness !== 1) {
+      filterParts.push(`brightness(${Number(settings.brightness.toFixed(2))})`);
+    }
+
     if (settings.contrast !== 1) {
       filterParts.push(`contrast(${Number(settings.contrast.toFixed(2))})`);
     }
@@ -355,10 +386,19 @@
       filterParts.push(`saturate(${Number(settings.saturation.toFixed(2))})`);
     }
 
-    filterParts.push(`url(#${FILTER_ID})`);
+    // Apply gamma approximation using brightness + contrast combo
+    if (settings.gamma !== 1) {
+      const gammaAdjust = Math.pow(settings.gamma, 0.5);
+      filterParts.push(`brightness(${Number(gammaAdjust.toFixed(2))})`);
+    }
+
+    // Only apply sharpen filter if not in compatibility mode
+    if (!state.compatibilityMode) {
+      filterParts.push(`url(#${FILTER_ID})`);
+    }
 
     const newFilter = filterParts.join(' ').trim();
-    const settingsToken = `${settings.sharpen.toFixed(4)}|${settings.contrast.toFixed(4)}|${settings.saturation.toFixed(4)}`;
+    const settingsToken = `${settings.sharpen.toFixed(4)}|${settings.contrast.toFixed(4)}|${settings.saturation.toFixed(4)}|${settings.brightness.toFixed(4)}|${settings.gamma.toFixed(4)}|${state.compatibilityMode}`;
 
     if (
       video.dataset[DATA_APPLIED_KEY] === 'true' &&
@@ -375,6 +415,7 @@
     const rect = video.getBoundingClientRect();
     debugLog('Applied filter', {
       settings,
+      compatibilityMode: state.compatibilityMode,
       width: Math.round(rect.width),
       height: Math.round(rect.height),
       src: video.currentSrc || video.src || video.dataset.src || 'inline'
@@ -546,7 +587,11 @@
       }
       const label = sliderValueLabels[key];
       if (label) {
-        label.textContent = formatPercent(value);
+        if (key === 'gamma') {
+          label.textContent = value.toFixed(2);
+        } else {
+          label.textContent = formatPercent(value);
+        }
       }
     });
   };
@@ -555,6 +600,7 @@
     applyPanelPosition();
     updatePanelVisibility();
     setButtonState(mainToggleButton, state.enabled, 'Enhancer: On', 'Enhancer: Off');
+    setButtonState(compatibilityToggleButton, state.compatibilityMode, 'Compatibility: On', 'Compatibility: Off');
     syncSliders();
     updateTabStyles();
     updatePresetSummary();
@@ -575,7 +621,11 @@
     state.settings[key] = Number(normalized.toFixed(3));
     const label = sliderValueLabels[key];
     if (label) {
-      label.textContent = formatPercent(state.settings[key]);
+      if (key === 'gamma') {
+        label.textContent = state.settings[key].toFixed(2);
+      } else {
+        label.textContent = formatPercent(state.settings[key]);
+      }
     }
 
     debugLog('Slider changed', { key, value: state.settings[key] });
@@ -587,6 +637,17 @@
     }
 
     updatePresetSummary();
+  };
+
+  const handleCompatibilityToggle = () => {
+    const willEnable = !state.compatibilityMode;
+    debugLog('Compatibility toggle clicked', { willEnable });
+    state.compatibilityMode = willEnable;
+    syncUI();
+    schedulePersist('compatibility-toggle');
+    if (state.enabled) {
+      scheduleRefresh('compatibility-toggle');
+    }
   };
 
   const setActiveTab = (tabName) => {
@@ -636,9 +697,11 @@
       </div>
       <div id="video-enhancer-tab-preset" class="video-enhancer-tab-content" role="tabpanel" data-video-enhancer-content="preset" aria-hidden="false">
         <button id="video-enhancer-main-toggle" type="button" class="video-enhancer-primary-button">Enhancer: Off</button>
+        <button id="video-enhancer-compatibility-toggle" type="button" class="video-enhancer-secondary-button">Compatibility: Off</button>
         <p class="video-enhancer-note" id="video-enhancer-preset-summary">
           Sharpen ${formatPercent(DEFAULT_SETTINGS.sharpen)} · Contrast ${formatDeltaPercent(DEFAULT_SETTINGS.contrast)} · Saturation ${formatDeltaPercent(DEFAULT_SETTINGS.saturation)}
         </p>
+        <p class="video-enhancer-note video-enhancer-help-text">💡 Enable compatibility mode if you experience performance issues or visual glitches.</p>
       </div>
       <div id="video-enhancer-tab-custom" class="video-enhancer-tab-content" role="tabpanel" data-video-enhancer-content="custom" aria-hidden="true">
         <div class="video-enhancer-slider-group">
@@ -662,21 +725,40 @@
           </label>
           <input id="video-enhancer-custom-saturation" type="range" min="50" max="200" step="1" value="115" />
         </div>
+        <div class="video-enhancer-slider-group">
+          <label class="video-enhancer-slider-label" for="video-enhancer-custom-brightness">
+            <span>Brightness</span>
+            <span id="video-enhancer-custom-brightness-value">100%</span>
+          </label>
+          <input id="video-enhancer-custom-brightness" type="range" min="50" max="200" step="1" value="100" />
+        </div>
+        <div class="video-enhancer-slider-group">
+          <label class="video-enhancer-slider-label" for="video-enhancer-custom-gamma">
+            <span>Gamma</span>
+            <span id="video-enhancer-custom-gamma-value">1.00</span>
+          </label>
+          <input id="video-enhancer-custom-gamma" type="range" min="50" max="200" step="1" value="100" />
+        </div>
       </div>
     `;
 
     document.documentElement.appendChild(panelNode);
 
     mainToggleButton = panelNode.querySelector('#video-enhancer-main-toggle');
+    compatibilityToggleButton = panelNode.querySelector('#video-enhancer-compatibility-toggle');
     presetSummaryNode = panelNode.querySelector('#video-enhancer-preset-summary');
 
     sliderInputs.sharpen = panelNode.querySelector('#video-enhancer-custom-sharpen');
     sliderInputs.contrast = panelNode.querySelector('#video-enhancer-custom-contrast');
     sliderInputs.saturation = panelNode.querySelector('#video-enhancer-custom-saturation');
+    sliderInputs.brightness = panelNode.querySelector('#video-enhancer-custom-brightness');
+    sliderInputs.gamma = panelNode.querySelector('#video-enhancer-custom-gamma');
 
     sliderValueLabels.sharpen = panelNode.querySelector('#video-enhancer-custom-sharpen-value');
     sliderValueLabels.contrast = panelNode.querySelector('#video-enhancer-custom-contrast-value');
     sliderValueLabels.saturation = panelNode.querySelector('#video-enhancer-custom-saturation-value');
+    sliderValueLabels.brightness = panelNode.querySelector('#video-enhancer-custom-brightness-value');
+    sliderValueLabels.gamma = panelNode.querySelector('#video-enhancer-custom-gamma-value');
 
     const tabButtons = panelNode.querySelectorAll('[data-video-enhancer-tab]');
     tabButtons.forEach((button) => {
@@ -760,10 +842,13 @@
     });
 
     mainToggleButton?.addEventListener('click', handleMainToggle);
+    compatibilityToggleButton?.addEventListener('click', handleCompatibilityToggle);
 
     sliderInputs.sharpen?.addEventListener('input', (event) => handleSliderInput('sharpen', event));
     sliderInputs.contrast?.addEventListener('input', (event) => handleSliderInput('contrast', event));
     sliderInputs.saturation?.addEventListener('input', (event) => handleSliderInput('saturation', event));
+    sliderInputs.brightness?.addEventListener('input', (event) => handleSliderInput('brightness', event));
+    sliderInputs.gamma?.addEventListener('input', (event) => handleSliderInput('gamma', event));
 
     syncUI();
   };

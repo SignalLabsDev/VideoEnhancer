@@ -2,10 +2,20 @@
   "manifest_version": 3,
   "name": "Video Enhancer",
   "description": "Enhance Twitch and YouTube videos with preset or custom sharpening, contrast, and saturation controls.",
-  "version": "1.2.1",
+  "version": "1.4.0",
   "permissions": ["storage"],
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "action": {
-    "default_title": "Video Enhancer"
+    "default_title": "Video Enhancer",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
   },
   "background": {
     "service_worker": "background.js"
