@@ -4,32 +4,15 @@
   }
   window.videoEnhancerInitialized = true;
 
-  const FILTER_ID = `video-enhancer-filter-${Math.random().toString(36).slice(2)}`;
-  const DATA_APPLIED_KEY = 'videoEnhancerApplied';
-  const DATA_ORIGINAL_FILTER_KEY = 'videoEnhancerOriginalFilter';
-  const DATA_SETTINGS_KEY = 'videoEnhancerSettingsToken';
-  const DATA_CURRENT_FILTER_KEY = 'videoEnhancerCurrentFilter';
-  const STORAGE_KEY = 'videoEnhancerState';
-  const STORAGE_VERSION = 1;
-  const PERSIST_DEBOUNCE_MS = 250;
-
-  const PRESET_SETTINGS = Object.freeze({
-    sharpen: 0.55,
-    contrast: 1.1,
+  const VN = window.VideoEnhancer || (window.VideoEnhancer = {});
+  const DEFAULT_SETTINGS = VN.DEFAULT_SETTINGS || Object.freeze({
+    sharpen: 0.3,
+    contrast: 1.0,
     saturation: 1.15,
     brightness: 1.0,
-    gamma: 1.0
+    gamma: 1.1
   });
-
-  const DEFAULT_SETTINGS = Object.freeze({
-    sharpen: PRESET_SETTINGS.sharpen,
-    contrast: PRESET_SETTINGS.contrast,
-    saturation: PRESET_SETTINGS.saturation,
-    brightness: PRESET_SETTINGS.brightness,
-    gamma: PRESET_SETTINGS.gamma
-  });
-
-  const state = {
+  const state = VN.state || (VN.state = {
     enabled: false,
     panelVisible: false,
     activeTab: 'preset',
@@ -40,42 +23,99 @@
       top: 80,
       left: null
     }
-  };
+  });
 
-  // Enable verbose logging via `localStorage.setItem('videoEnhancerDebug', '1')` in DevTools.
-  const DEBUG = (() => {
+  const debugLog = () => {};
+  const ensureFilter = VN.ensureFilter || (() => {});
+  const updateKernel = VN.updateKernel || (() => {});
+  const updateAllVideos = VN.updateAllVideos || (() => {});
+  const refreshEffect = VN.refreshEffect || (() => {});
+
+  const overlayApi = VN.overlay;
+
+  const SITE_VARIANT = (() => {
     try {
-      return localStorage.getItem('videoEnhancerDebug') === '1';
+      const host = (location.hostname || '').toLowerCase();
+      if (host.includes('youtube')) {
+        return 'youtube';
+      }
+      if (host.includes('twitch')) {
+        return 'twitch';
+      }
+      if (host.includes('kick')) {
+        return 'kick';
+      }
     } catch (error) {
-      console.warn('[VideoEnhancer] Unable to read debug flag from localStorage:', error);
-      return false;
+      console.warn('[VideoEnhancer] Unable to detect site variant:', error);
     }
+    return 'default';
   })();
 
-  const debugLog = (...args) => {
-    if (DEBUG) {
-      console.debug('[VideoEnhancer]', ...args);
-    }
-  };
-
-  if (DEBUG) {
-    debugLog('Debug logging enabled');
-  }
-
-  try {
-    window.videoEnhancerDebugLog = debugLog;
-  } catch (error) {
-    debugLog('Unable to expose debug logger on window', error);
-  }
-
-  const baseKernel = [0, 0, 0, 0, 1, 0, 0, 0, 0];
-  const sharpenKernel = [0, -1, 0, -1, 5, -1, 0, -1, 0];
-
-  let filterNode = null;
-  let convolveNode = null;
   let panelNode = null;
   let mainToggleButton = null;
   let compatibilityToggleButton = null;
+
+  const ensureFloatingToggle = () => {
+    if (!floatingToggle) {
+      floatingToggle = document.createElement('button');
+      floatingToggle.id = 'video-enhancer-inline-toggle';
+      floatingToggle.type = 'button';
+      floatingToggle.textContent = state.enabled ? 'Enhanced' : 'Enhance';
+      floatingToggle.style.cssText = `
+        position: fixed !important;
+        top: -9999px !important;
+        left: -9999px !important;
+        transform: translateY(8px);
+        z-index: 2147483646 !important;
+        padding: 8px 12px;
+        border-radius: 8px;
+        border: 1px solid rgba(0,0,0,0.2);
+        background: #efeff1;
+        color: #0e0e10;
+        font-weight: 600;
+        line-height: 1;
+        display: inline-flex;
+        align-items: center;
+        visibility: hidden;
+      `;
+      floatingToggle.addEventListener('click', () => {
+        state.enabled = !state.enabled;
+        updateInlineToggleState();
+        schedulePersist('inline-toggle');
+        scheduleRefresh('inline-toggle');
+      });
+      document.documentElement.appendChild(floatingToggle);
+    }
+    inlineToggleButton = floatingToggle;
+    updateInlineToggleState();
+    positionFloatingToggle();
+  };
+
+  // Removed floating reposition logic
+
+  const observeAnchor = (anchor) => {
+    if (!anchor || observedAnchor === anchor) return;
+    if (anchorObserver) {
+      try { anchorObserver.disconnect(); } catch (_) {}
+      anchorObserver = null;
+    }
+    observedAnchor = anchor;
+    let debounce = null;
+    anchorObserver = new MutationObserver(() => {
+      if (debounce) return;
+      debounce = setTimeout(() => {
+        debounce = null;
+        const existing = document.getElementById('video-enhancer-inline-toggle');
+        const visible = existing && existing.offsetParent !== null;
+        const within = existing && (existing.closest('#video-enhancer-inline-container') || existing.closest('#title') || existing.closest('#live-channel-stream-information') || existing.closest('#channel-content'));
+        if (!existing || !visible || !within) {
+          inlineToggleButton = null;
+          ensureInlineToggle();
+        }
+      }, 120);
+    });
+    anchorObserver.observe(anchor, { childList: true, subtree: true });
+  };
   const sliderInputs = {
     sharpen: null,
     contrast: null,
@@ -90,7 +130,6 @@
     brightness: null,
     gamma: null
   };
-  let presetSummaryNode = null;
   const dragState = {
     isDragging: false,
     pointerId: null,
@@ -99,232 +138,13 @@
     startTop: 0,
     startLeft: 0
   };
-  let lastKernelAmount = null;
-  let persistTimer = null;
   let visibilitySuspended = false;
 
-  const MIN_TARGET_WIDTH = 320;
-  const MIN_TARGET_HEIGHT = 180;
 
-  const collectVideoMetrics = () => {
-    const videos = Array.from(document.querySelectorAll('video')).filter((node) => node instanceof HTMLVideoElement);
-    return videos.map((video) => {
-      const rect = video.getBoundingClientRect();
-      return {
-        video,
-        rect,
-        area: rect.width * rect.height
-      };
-    });
-  };
+  // Removed unused video metric helpers (now handled in ve-filters)
 
-  const isMetricEligible = (metric) => metric.rect.width >= MIN_TARGET_WIDTH && metric.rect.height >= MIN_TARGET_HEIGHT;
-
-  const findPrimaryMetric = (metrics) => metrics.reduce((best, metric) => {
-    if (!best || metric.area > best.area) {
-      return metric;
-    }
-    return best;
-  }, null);
-
-  const describeMetric = (metric) => {
-    if (!metric) {
-      return null;
-    }
-
-    const { rect, video } = metric;
-    return {
-      width: Math.round(rect.width),
-      height: Math.round(rect.height),
-      area: Math.round(metric.area),
-      src: video.currentSrc || video.src || video.dataset.src || 'inline'
-    };
-  };
-
-  const findAnchorForVideo = (video) =>
-    video.closest('ytd-player') ||
-    video.closest('.video-player__container') ||
-    video.closest('.persistent-player') ||
-    video.closest('.tw-player') ||
-    video.closest('#player') ||
-    video.closest('#video-container') ||
-    video.parentElement;
-
-  const buildPersistSnapshot = () => ({
-    version: STORAGE_VERSION,
-    data: {
-      enabled: state.enabled,
-      panelVisible: state.panelVisible,
-      activeTab: state.activeTab,
-      compatibilityMode: state.compatibilityMode,
-      settings: { ...state.settings },
-      panelPosition: { ...state.panelPosition }
-    }
-  });
-
-  const schedulePersist = (reason) => {
-    if (!chrome?.storage?.local) {
-      return;
-    }
-
-    if (persistTimer) {
-      clearTimeout(persistTimer);
-    }
-
-    persistTimer = setTimeout(() => {
-      persistTimer = null;
-      const snapshot = buildPersistSnapshot();
-      debugLog('Persisting state', { reason, snapshot });
-
-      try {
-        chrome.storage.local.set({ [STORAGE_KEY]: snapshot }, () => {
-          if (chrome.runtime && chrome.runtime.lastError) {
-            debugLog('Persist error', chrome.runtime.lastError.message);
-          }
-        });
-      } catch (error) {
-        debugLog('Persist exception', error);
-      }
-    }, PERSIST_DEBOUNCE_MS);
-  };
-
-  const loadPersistedState = () => new Promise((resolve) => {
-    if (!chrome?.storage?.local) {
-      resolve();
-      return;
-    }
-
-    try {
-      chrome.storage.local.get(STORAGE_KEY, (result) => {
-        if (chrome.runtime && chrome.runtime.lastError) {
-          debugLog('Storage load error', chrome.runtime.lastError.message);
-          resolve();
-          return;
-        }
-
-        const payload = result?.[STORAGE_KEY];
-        const snapshot = payload && typeof payload === 'object'
-          ? (payload.data && typeof payload.data === 'object' ? payload.data : payload)
-          : null;
-
-        if (snapshot) {
-          if (typeof snapshot.enabled === 'boolean') {
-            state.enabled = snapshot.enabled;
-          }
-          if (typeof snapshot.panelVisible === 'boolean') {
-            state.panelVisible = snapshot.panelVisible;
-          }
-          if (snapshot.activeTab === 'custom' || snapshot.activeTab === 'preset') {
-            state.activeTab = snapshot.activeTab;
-          }
-          if (typeof snapshot.compatibilityMode === 'boolean') {
-            state.compatibilityMode = snapshot.compatibilityMode;
-          }
-          const settingsSource = (snapshot.settings && typeof snapshot.settings === 'object')
-            ? snapshot.settings
-            : (snapshot.custom && typeof snapshot.custom === 'object' ? snapshot.custom : null);
-
-          if (settingsSource) {
-            const restoredSettings = { ...DEFAULT_SETTINGS };
-            ['sharpen', 'contrast', 'saturation', 'brightness', 'gamma'].forEach((key) => {
-              if (typeof settingsSource[key] === 'number') {
-                const value = settingsSource[key];
-                if (key === 'sharpen') {
-                  restoredSettings[key] = Math.min(Math.max(value, 0), 1.5);
-                } else if (key === 'brightness' || key === 'gamma') {
-                  restoredSettings[key] = Math.min(Math.max(value, 0.5), 2);
-                } else {
-                  restoredSettings[key] = Math.min(Math.max(value, 0.5), 2);
-                }
-              }
-            });
-            state.settings = restoredSettings;
-          }
-          if (snapshot.panelPosition && typeof snapshot.panelPosition === 'object') {
-            state.panelPosition = {
-              useCustom: Boolean(snapshot.panelPosition.useCustom),
-              top: typeof snapshot.panelPosition.top === 'number' ? snapshot.panelPosition.top : state.panelPosition.top,
-              left: typeof snapshot.panelPosition.left === 'number' ? snapshot.panelPosition.left : state.panelPosition.left
-            };
-          }
-        }
-
-        debugLog('Restored state', {
-          enabled: state.enabled,
-          panelVisible: state.panelVisible,
-          activeTab: state.activeTab,
-          settings: { ...state.settings }
-        });
-
-        resolve();
-      });
-    } catch (error) {
-      debugLog('Storage load exception', error);
-      resolve();
-    }
-  });
-
-  const computeKernelString = (amount) => baseKernel
-    .map((baseValue, index) => {
-      const sharpenValue = sharpenKernel[index];
-      const mixed = baseValue + amount * (sharpenValue - baseValue);
-      return Number.parseFloat(mixed.toFixed(4));
-    })
-    .join(' ');
-
-  const ensureFilter = () => {
-    if (filterNode && convolveNode) {
-      return;
-    }
-
-    const svgNS = 'http://www.w3.org/2000/svg';
-    filterNode = document.createElementNS(svgNS, 'svg');
-    filterNode.setAttribute('aria-hidden', 'true');
-    filterNode.setAttribute('focusable', 'false');
-    filterNode.style.position = 'absolute';
-    filterNode.style.width = '0';
-    filterNode.style.height = '0';
-    filterNode.style.pointerEvents = 'none';
-
-    const defsNode = document.createElementNS(svgNS, 'defs');
-    const filter = document.createElementNS(svgNS, 'filter');
-    filter.setAttribute('id', FILTER_ID);
-    filter.setAttribute('color-interpolation-filters', 'sRGB');
-
-    convolveNode = document.createElementNS(svgNS, 'feConvolveMatrix');
-    convolveNode.setAttribute('order', '3');
-    convolveNode.setAttribute('kernelMatrix', computeKernelString(state.settings.sharpen));
-    convolveNode.setAttribute('edgeMode', 'duplicate');
-
-    filter.appendChild(convolveNode);
-    defsNode.appendChild(filter);
-    filterNode.appendChild(defsNode);
-
-    const targetParent = document.body || document.documentElement;
-    if (targetParent) {
-      targetParent.appendChild(filterNode);
-    } else {
-      document.addEventListener(
-        'DOMContentLoaded',
-        () => {
-          (document.body || document.documentElement).appendChild(filterNode);
-        },
-        { once: true }
-      );
-    }
-  };
-
-  const updateKernel = (amount) => {
-    if (!convolveNode) {
-      return;
-    }
-    if (lastKernelAmount !== null && Math.abs(lastKernelAmount - amount) < 0.0001) {
-      return;
-    }
-    debugLog('Updating kernel', { sharpen: Number(amount.toFixed(4)) });
-    convolveNode.setAttribute('kernelMatrix', computeKernelString(amount));
-    lastKernelAmount = amount;
-  };
+  const schedulePersist = VN.schedulePersist || (() => {});
+  const loadPersistedState = VN.loadPersistedState || (() => Promise.resolve());
 
   const formatPercent = (value) => `${Math.round(value * 100)}%`;
 
@@ -336,166 +156,11 @@
     return `${delta > 0 ? '+' : ''}${delta}%`;
   };
 
-  const updatePresetSummary = () => {
-    if (!presetSummaryNode) {
-      return;
-    }
-    const parts = [
-      `Sharpen ${formatPercent(state.settings.sharpen)}`,
-      `Contrast ${formatDeltaPercent(state.settings.contrast)}`,
-      `Saturation ${formatDeltaPercent(state.settings.saturation)}`
-    ];
-    if (state.settings.brightness !== 1) {
-      parts.push(`Brightness ${formatDeltaPercent(state.settings.brightness)}`);
-    }
-    if (state.settings.gamma !== 1) {
-      parts.push(`Gamma ${state.settings.gamma.toFixed(2)}`);
-    }
-    presetSummaryNode.textContent = parts.join(' · ');
-  };
+  // Settings summary removed
 
   const getCurrentSettings = () => state.settings;
 
-  const applyFilterToVideo = (video, settings) => {
-    if (!(video instanceof HTMLVideoElement)) {
-      return;
-    }
-
-    ensureFilter();
-
-    if (!(DATA_ORIGINAL_FILTER_KEY in video.dataset)) {
-      video.dataset[DATA_ORIGINAL_FILTER_KEY] = video.style.filter || '';
-    }
-
-    const originalFilter = video.dataset[DATA_ORIGINAL_FILTER_KEY];
-
-    const filterParts = [];
-    if (originalFilter && originalFilter.trim().length > 0) {
-      filterParts.push(originalFilter.trim());
-    }
-
-    if (settings.brightness !== 1) {
-      filterParts.push(`brightness(${Number(settings.brightness.toFixed(2))})`);
-    }
-
-    if (settings.contrast !== 1) {
-      filterParts.push(`contrast(${Number(settings.contrast.toFixed(2))})`);
-    }
-
-    if (settings.saturation !== 1) {
-      filterParts.push(`saturate(${Number(settings.saturation.toFixed(2))})`);
-    }
-
-    // Apply gamma approximation using brightness + contrast combo
-    if (settings.gamma !== 1) {
-      const gammaAdjust = Math.pow(settings.gamma, 0.5);
-      filterParts.push(`brightness(${Number(gammaAdjust.toFixed(2))})`);
-    }
-
-    // Only apply sharpen filter if not in compatibility mode
-    if (!state.compatibilityMode) {
-      filterParts.push(`url(#${FILTER_ID})`);
-    }
-
-    const newFilter = filterParts.join(' ').trim();
-    const settingsToken = `${settings.sharpen.toFixed(4)}|${settings.contrast.toFixed(4)}|${settings.saturation.toFixed(4)}|${settings.brightness.toFixed(4)}|${settings.gamma.toFixed(4)}|${state.compatibilityMode}`;
-
-    if (
-      video.dataset[DATA_APPLIED_KEY] === 'true' &&
-      video.dataset[DATA_SETTINGS_KEY] === settingsToken &&
-      video.dataset[DATA_CURRENT_FILTER_KEY] === newFilter
-    ) {
-      return;
-    }
-
-    video.style.filter = newFilter;
-    video.dataset[DATA_APPLIED_KEY] = 'true';
-    video.dataset[DATA_SETTINGS_KEY] = settingsToken;
-    video.dataset[DATA_CURRENT_FILTER_KEY] = newFilter;
-    const rect = video.getBoundingClientRect();
-    debugLog('Applied filter', {
-      settings,
-      compatibilityMode: state.compatibilityMode,
-      width: Math.round(rect.width),
-      height: Math.round(rect.height),
-      src: video.currentSrc || video.src || video.dataset.src || 'inline'
-    });
-  };
-
-  const removeFilterFromVideo = (video) => {
-    if (!(video instanceof HTMLVideoElement)) {
-      return;
-    }
-
-    if (video.dataset[DATA_APPLIED_KEY] !== 'true') {
-      return;
-    }
-
-    const originalFilter = video.dataset[DATA_ORIGINAL_FILTER_KEY] ?? '';
-    video.style.filter = originalFilter;
-    delete video.dataset[DATA_APPLIED_KEY];
-    delete video.dataset[DATA_ORIGINAL_FILTER_KEY];
-    delete video.dataset[DATA_SETTINGS_KEY];
-    delete video.dataset[DATA_CURRENT_FILTER_KEY];
-    if (DEBUG) {
-      const rect = video.getBoundingClientRect();
-      debugLog('Removed filter', {
-        width: Math.round(rect.width),
-        height: Math.round(rect.height),
-        src: video.currentSrc || video.src || video.dataset.src || 'inline'
-      });
-    }
-  };
-
-  const updateAllVideos = (settings) => {
-    const metrics = collectVideoMetrics();
-    const primaryMetric = findPrimaryMetric(metrics);
-    let targetedMetrics = [];
-
-    if (settings) {
-      targetedMetrics = metrics.filter(isMetricEligible);
-      if (targetedMetrics.length === 0 && primaryMetric) {
-        targetedMetrics = [primaryMetric];
-      }
-    }
-
-    const targetedVideos = new Set(targetedMetrics.map((metric) => metric.video));
-
-    debugLog('updateAllVideos', {
-      applyingSettings: Boolean(settings),
-      totalVideos: metrics.length,
-      targeted: targetedMetrics.length,
-      primary: describeMetric(primaryMetric)
-    });
-
-    metrics.forEach((metric) => {
-      if (!settings) {
-        if (metric.video.dataset[DATA_APPLIED_KEY] === 'true') {
-          removeFilterFromVideo(metric.video);
-        }
-        return;
-      }
-
-      if (targetedVideos.size === 0 || targetedVideos.has(metric.video)) {
-        applyFilterToVideo(metric.video, settings);
-      } else if (metric.video.dataset[DATA_APPLIED_KEY] === 'true') {
-        removeFilterFromVideo(metric.video);
-      }
-    });
-  };
-
-  const refreshEffect = () => {
-    debugLog('refreshEffect', { enabled: state.enabled });
-    if (!state.enabled) {
-      updateAllVideos(null);
-      return;
-    }
-
-    const settings = getCurrentSettings();
-    ensureFilter();
-    updateKernel(settings.sharpen);
-    updateAllVideos(settings);
-  };
+  
 
   let refreshScheduled = false;
 
@@ -513,6 +178,10 @@
     });
   };
 
+  const cancelScheduledRefresh = () => {
+    refreshScheduled = false;
+  };
+
   const updatePanelVisibility = () => {
     if (panelNode) {
       panelNode.classList.toggle('video-enhancer-hidden', !state.panelVisible);
@@ -523,6 +192,9 @@
     state.panelVisible = visible;
     applyPanelPosition();
     updatePanelVisibility();
+    if (visible) {
+      syncUI(); // Ensure UI is synced when panel becomes visible
+    }
     schedulePersist('panel-visibility');
   };
 
@@ -550,6 +222,7 @@
     }
     button.textContent = isOn ? onLabel : offLabel;
     button.classList.toggle('video-enhancer-button-off', !isOn);
+    button.classList.toggle('video-enhancer-button-on', isOn);
   };
 
   const updateTabStyles = () => {
@@ -599,11 +272,14 @@
   const syncUI = () => {
     applyPanelPosition();
     updatePanelVisibility();
-    setButtonState(mainToggleButton, state.enabled, 'Enhancer: On', 'Enhancer: Off');
-    setButtonState(compatibilityToggleButton, state.compatibilityMode, 'Compatibility: On', 'Compatibility: Off');
+    setButtonState(mainToggleButton, state.enabled, 'ON', 'OFF');
+    if (compatibilityToggleButton) {
+      setButtonState(compatibilityToggleButton, state.compatibilityMode, 'Compatibility: On', 'Compatibility: Off');
+    }
     syncSliders();
+    updateCompatibilityState();
     updateTabStyles();
-    updatePresetSummary();
+    updateInlineToggleState();
   };
 
   const handleMainToggle = () => {
@@ -635,8 +311,20 @@
     if (state.enabled) {
       scheduleRefresh(`slider-${key}`);
     }
+  };
 
-    updatePresetSummary();
+  const updateCompatibilityState = () => {
+    const sharpenInput = sliderInputs.sharpen;
+    const sharpenLabel = sliderValueLabels.sharpen;
+    const sharpenGroup = sharpenInput?.closest('.video-enhancer-slider-group');
+
+    if (sharpenInput && sharpenLabel && sharpenGroup) {
+      const isDisabled = state.compatibilityMode;
+      sharpenInput.disabled = isDisabled;
+      sharpenInput.classList.toggle('video-enhancer-disabled', isDisabled);
+      sharpenLabel.classList.toggle('video-enhancer-disabled', isDisabled);
+      sharpenGroup.classList.toggle('video-enhancer-disabled', isDisabled);
+    }
   };
 
   const handleCompatibilityToggle = () => {
@@ -649,6 +337,13 @@
       scheduleRefresh('compatibility-toggle');
     }
   };
+
+  const updateInlineToggleState = () => {
+    if (overlayApi?.updateState) {
+      overlayApi.updateState();
+    }
+  };
+  
 
   const setActiveTab = (tabName) => {
     const normalized = tabName === 'custom' ? 'custom' : 'preset';
@@ -692,24 +387,24 @@
         <button id="video-enhancer-hide" type="button" class="video-enhancer-icon-button" aria-label="Hide Video Enhancer">&times;</button>
       </div>
       <div class="video-enhancer-tabs" role="tablist" aria-label="Video Enhancer modes">
-        <button type="button" class="video-enhancer-tab" role="tab" data-video-enhancer-tab="preset" aria-controls="video-enhancer-tab-preset">Preset</button>
-        <button type="button" class="video-enhancer-tab" role="tab" data-video-enhancer-tab="custom" aria-controls="video-enhancer-tab-custom">Custom</button>
+        <button type="button" class="video-enhancer-tab" role="tab" data-video-enhancer-tab="preset" aria-controls="video-enhancer-tab-preset">Default</button>
+        <button type="button" class="video-enhancer-tab" role="tab" data-video-enhancer-tab="custom" aria-controls="video-enhancer-tab-custom">Settings</button>
       </div>
       <div id="video-enhancer-tab-preset" class="video-enhancer-tab-content" role="tabpanel" data-video-enhancer-content="preset" aria-hidden="false">
-        <button id="video-enhancer-main-toggle" type="button" class="video-enhancer-primary-button">Enhancer: Off</button>
-        <button id="video-enhancer-compatibility-toggle" type="button" class="video-enhancer-secondary-button">Compatibility: Off</button>
-        <p class="video-enhancer-note" id="video-enhancer-preset-summary">
-          Sharpen ${formatPercent(DEFAULT_SETTINGS.sharpen)} · Contrast ${formatDeltaPercent(DEFAULT_SETTINGS.contrast)} · Saturation ${formatDeltaPercent(DEFAULT_SETTINGS.saturation)}
-        </p>
-        <p class="video-enhancer-note video-enhancer-help-text">💡 Enable compatibility mode if you experience performance issues or visual glitches.</p>
+        <button id="video-enhancer-main-toggle" type="button" class="video-enhancer-primary-button">OFF</button>
+        <p class="video-enhancer-note video-enhancer-help-text">Enhance your video experience with customizable filters</p>
       </div>
       <div id="video-enhancer-tab-custom" class="video-enhancer-tab-content" role="tabpanel" data-video-enhancer-content="custom" aria-hidden="true">
         <div class="video-enhancer-slider-group">
+          <button id="video-enhancer-compatibility-toggle" type="button" class="video-enhancer-primary-button">Compatibility: Off</button>
+          <p class="video-enhancer-note video-enhancer-help-text">Disable sharpness for better performance</p>
+        </div>
+        <div class="video-enhancer-slider-group">
           <label class="video-enhancer-slider-label" for="video-enhancer-custom-sharpen">
             <span>Sharpen</span>
-            <span id="video-enhancer-custom-sharpen-value">55%</span>
+            <span id="video-enhancer-custom-sharpen-value">30%</span>
           </label>
-          <input id="video-enhancer-custom-sharpen" type="range" min="0" max="150" step="1" value="55" />
+          <input id="video-enhancer-custom-sharpen" type="range" min="0" max="150" step="1" value="30" />
         </div>
         <div class="video-enhancer-slider-group">
           <label class="video-enhancer-slider-label" for="video-enhancer-custom-contrast">
@@ -721,9 +416,9 @@
         <div class="video-enhancer-slider-group">
           <label class="video-enhancer-slider-label" for="video-enhancer-custom-saturation">
             <span>Saturation</span>
-            <span id="video-enhancer-custom-saturation-value">115%</span>
+            <span id="video-enhancer-custom-saturation-value">110%</span>
           </label>
-          <input id="video-enhancer-custom-saturation" type="range" min="50" max="200" step="1" value="115" />
+          <input id="video-enhancer-custom-saturation" type="range" min="50" max="200" step="1" value="110" />
         </div>
         <div class="video-enhancer-slider-group">
           <label class="video-enhancer-slider-label" for="video-enhancer-custom-brightness">
@@ -735,9 +430,9 @@
         <div class="video-enhancer-slider-group">
           <label class="video-enhancer-slider-label" for="video-enhancer-custom-gamma">
             <span>Gamma</span>
-            <span id="video-enhancer-custom-gamma-value">1.00</span>
+            <span id="video-enhancer-custom-gamma-value">1.10</span>
           </label>
-          <input id="video-enhancer-custom-gamma" type="range" min="50" max="200" step="1" value="100" />
+          <input id="video-enhancer-custom-gamma" type="range" min="50" max="200" step="1" value="110" />
         </div>
       </div>
     `;
@@ -746,7 +441,6 @@
 
     mainToggleButton = panelNode.querySelector('#video-enhancer-main-toggle');
     compatibilityToggleButton = panelNode.querySelector('#video-enhancer-compatibility-toggle');
-    presetSummaryNode = panelNode.querySelector('#video-enhancer-preset-summary');
 
     sliderInputs.sharpen = panelNode.querySelector('#video-enhancer-custom-sharpen');
     sliderInputs.contrast = panelNode.querySelector('#video-enhancer-custom-contrast');
@@ -850,21 +544,31 @@
     sliderInputs.brightness?.addEventListener('input', (event) => handleSliderInput('brightness', event));
     sliderInputs.gamma?.addEventListener('input', (event) => handleSliderInput('gamma', event));
 
-    syncUI();
+    syncUI(); // Sync UI after panel is created and listeners are attached
   };
 
   const processNode = (node) => {
     if (node instanceof HTMLVideoElement) {
       debugLog('Mutation observed direct video element');
       scheduleRefresh('mutation:video');
+      overlayApi?.requestPosition?.();
       return;
     }
 
     if (node instanceof HTMLElement) {
       const containsVideo = node.tagName === 'VIDEO' || node.querySelector('video');
+      const ytActionsAppeared = (
+        node.id === 'top-level-buttons-computed' ||
+        node.id === 'actions' ||
+        node.id === 'actions-inner' ||
+        node.querySelector?.('#top-level-buttons-computed, #actions, #actions-inner, ytd-segmented-like-dislike-button-renderer')
+      );
       if (containsVideo) {
         debugLog('Mutation observed container with video');
         scheduleRefresh('mutation:container');
+        overlayApi?.requestPosition?.();
+      } else if (SITE_VARIANT === 'youtube' && ytActionsAppeared) {
+        overlayApi?.requestPosition?.();
       }
     }
   };
@@ -875,12 +579,23 @@
         if (mutation.type === 'attributes' && mutation.target instanceof HTMLVideoElement) {
           debugLog('Mutation observed attribute change on video');
           scheduleRefresh('mutation:attributes');
+          overlayApi?.requestPosition?.();
           return;
         }
 
         mutation.addedNodes.forEach((node) => {
           processNode(node);
+          overlayApi?.requestPosition?.();
         });
+
+        if (SITE_VARIANT === 'youtube') {
+          const t = mutation.target;
+          if (t && t instanceof HTMLElement) {
+            if (t.matches?.('ytd-watch-metadata, ytd-menu-renderer') || t.querySelector?.('ytd-watch-metadata, ytd-menu-renderer')) {
+              overlayApi?.requestPosition?.();
+            }
+          }
+        }
       });
     });
 
@@ -894,6 +609,7 @@
 
   const handleVisibilityChange = () => {
     if (document.hidden) {
+      cancelScheduledRefresh();
       if (state.enabled) {
         debugLog('Document hidden – temporarily removing filters');
         updateAllVideos(null);
@@ -905,6 +621,7 @@
     if (visibilitySuspended) {
       debugLog('Document visible – restoring filters');
       visibilitySuspended = false;
+      cancelScheduledRefresh();
       scheduleRefresh('visibility-restore');
     }
   };
@@ -918,6 +635,19 @@
     initMutationObserver();
     syncUI();
     refreshEffect();
+    if (overlayApi?.init) {
+      overlayApi.init({
+        isEnabled: () => state.enabled,
+        onToggle: () => {
+          const willEnable = !state.enabled;
+          debugLog('Overlay toggle clicked', { willEnable });
+          state.enabled = willEnable;
+          syncUI();
+          schedulePersist('inline-toggle');
+          scheduleRefresh('inline-toggle');
+        }
+      });
+    }
   };
 
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
@@ -925,6 +655,7 @@
       if (message && message.type === 'VIDEO_ENHANCER_TOGGLE_PANEL') {
         ensurePanel();
         setPanelVisibility(!state.panelVisible);
+        // UI sync is handled in setPanelVisibility when visible becomes true
       }
     });
   }
