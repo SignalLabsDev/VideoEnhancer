@@ -100,8 +100,8 @@
     const enabled = Boolean(config.isEnabled());
     overlayButton.textContent = enabled ? 'Enhanced' : 'Enhance';
     if (enabled) {
-      overlayButton.style.setProperty('background-image', 'linear-gradient(135deg, #5c6df4, #845ae0)', 'important');
-      overlayButton.style.setProperty('box-shadow', '0 8px 18px rgba(92, 109, 244, 0.35)', 'important');
+      overlayButton.style.setProperty('background-image', 'linear-gradient(135deg, #3ea6ff, #2481ff)', 'important');
+      overlayButton.style.setProperty('box-shadow', '0 8px 18px rgba(36, 129, 255, 0.35)', 'important');
       overlayButton.style.setProperty('color', '#ffffff', 'important');
       overlayButton.style.setProperty('border-color', 'transparent', 'important');
     } else {
@@ -137,7 +137,7 @@
         padding: 0 16px;
         border-radius: 11px;
         border: 1px solid transparent;
-        background-image: linear-gradient(135deg, #5c6df4, #845ae0);
+        background-image: linear-gradient(135deg, #3ea6ff, #2481ff);
         color: #ffffff;
         font-family: inherit;
         font-size: 14px;
