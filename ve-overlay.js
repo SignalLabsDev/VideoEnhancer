@@ -100,13 +100,16 @@
     const enabled = Boolean(config.isEnabled());
     overlayButton.textContent = enabled ? 'Enhanced' : 'Enhance';
     if (enabled) {
-      overlayButton.style.setProperty('background-color', '#3ea6ff', 'important');
+      overlayButton.style.setProperty('background-image', 'linear-gradient(135deg, #5c6df4, #845ae0)', 'important');
+      overlayButton.style.setProperty('box-shadow', '0 8px 18px rgba(92, 109, 244, 0.35)', 'important');
       overlayButton.style.setProperty('color', '#ffffff', 'important');
       overlayButton.style.setProperty('border-color', 'transparent', 'important');
     } else {
-      overlayButton.style.setProperty('background-color', '#efeff1', 'important');
-      overlayButton.style.setProperty('color', '#0e0e10', 'important');
-      overlayButton.style.setProperty('border-color', 'rgba(0,0,0,0.2)', 'important');
+      overlayButton.style.setProperty('background-image', 'none', 'important');
+      overlayButton.style.setProperty('background-color', 'rgba(255, 255, 255, 0.1)', 'important');
+      overlayButton.style.setProperty('box-shadow', 'inset 0 0 0 1px rgba(255, 255, 255, 0.12)', 'important');
+      overlayButton.style.setProperty('color', 'rgba(208, 211, 220, 0.9)', 'important');
+      overlayButton.style.setProperty('border-color', 'transparent', 'important');
     }
   };
 
@@ -129,21 +132,24 @@
         z-index: 2147483646 !important;
         top: -9999px;
         right: -9999px;
-        padding: 8px 12px;
-        border-radius: 8px;
-        border: 1px solid rgba(0,0,0,0.2);
-        background: #efeff1;
-        color: #0e0e10;
+        min-width: 96px;
+        height: 38px;
+        padding: 0 16px;
+        border-radius: 11px;
+        border: 1px solid transparent;
+        background-image: linear-gradient(135deg, #5c6df4, #845ae0);
+        color: #ffffff;
         font-family: inherit;
         font-size: 14px;
         font-weight: 600;
-        line-height: 1;
+        line-height: 38px;
         display: inline-flex;
         align-items: center;
+        justify-content: center;
         visibility: hidden;
         opacity: 0;
-        transition: opacity 120ms ease;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        transition: opacity 120ms ease, box-shadow 120ms ease;
+        box-shadow: 0 8px 18px rgba(92, 109, 244, 0.35);
       `;
       overlayButton.addEventListener('click', () => {
         try {

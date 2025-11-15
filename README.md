@@ -1,32 +1,23 @@
-# Video Enhancer Chrome Extension
+# Video Enhancer
 
-Enhance Twitch and YouTube playback with a one-click preset or fine-grained custom controls for sharpening, contrast, and saturation.
+Give YouTube, Twitch, and Kick streams a sharper, more vivid look with a single click or fine-tuned controls.
 
-## Features
+## Key Features
 
-- **Preset tab** – a single toggle applies tuned values (sharpen 55%, contrast +10%, saturation +15%) to YouTube (web/mobile/music) and Twitch players
-- **Custom tab** – adjust sharpening (0–150%), contrast & saturation (50–200%); changes start from the preset and persist across sessions
-- **Toolbar toggle** – use the Chrome toolbar button to show/hide the floating panel
-- **GPU-accelerated pipeline** – combines CSS contrast/saturation with an SVG `feConvolveMatrix` sharpen pass for real-time updates
-- **SPA aware** – MutationObserver keeps new/changed videos in sync on both platforms, including Twitch channel switches and YouTube navigation
+- **Inline overlay button** – hover the primary video to instantly toggle the enhancement preset.
+- **Floating control panel** – drag the panel anywhere, switch between a one-click preset and fully custom sliders for sharpen, contrast, saturation, brightness, and gamma.
+- **Responsive to SPA navigation** – the overlay follows you across watch pages and live channels without reloads.
+- **GPU-friendly sharpening** – blends CSS filters with an SVG-based sharpen pass for crisp playback on modern hardware.
 
-## Getting Started
+## How It Works
 
-1. Open Chrome and visit `chrome://extensions/`
-2. Enable **Developer mode** (top-right toggle)
-3. Click **Load unpacked** and select this folder (`VideoSharpener`)
-4. Head to YouTube or Twitch; the **Video Enhancer** effect starts disabled, so use the toolbar icon when you’re ready
+1. Pin the extension and click the toolbar icon whenever you want to open or hide the control panel.
+2. Start with the preset toggle for an instant boost, or move to the Settings tab to dial in each filter individually.
+3. Settings persist across sessions, and enhancements follow the primary video on supported pages (YouTube watch pages, Twitch/Kick channel homes).
 
-## Usage
+## Tips
 
-- Click the extension’s toolbar icon to toggle the control panel
-- Use the **Preset** tab’s toggle to turn the effect on or off (it’s off by default)
-- Switch to the **Custom** tab to dial in sharpening, contrast, and saturation; adjustments update the stream in real time and persist across sessions
-- Effect state applies to all visible videos on the page and persists through dynamic content updates until you toggle it off
-
-## Notes
-
-- The floating panel can be dragged by its header; double-check positioning if you resize the window or use smaller viewports
-- Custom slider values persist; adjust the defaults in `contentScript.js` (see `PRESET_SETTINGS`) if you want a different starting point
-- For extreme sharpening levels, consider pairing with lower contrast to avoid halos on high-contrast footage
+- The overlay button only appears while hovering the main video to stay out of the way during normal viewing.
+- If you notice halos at high sharpen levels, lower contrast slightly for a more balanced image.
+- The panel remembers its position; drag it to a comfortable spot and it will stay there the next time you open it.
 

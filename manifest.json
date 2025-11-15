@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Video Enhancer",
   "description": "Enhance videos on Twitch, YouTube, and Kick with sharpening, contrast, saturation, brightness, and gamma controls.",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "permissions": ["storage"],
   "icons": {
     "16": "icons/icon16.png",
