@@ -14,6 +14,14 @@
   let repositionRAF = null;
   let hoverRAF = null;
   let spaHooksInstalled = false;
+  let suppressed = false;
+
+  const hideOverlayButton = () => {
+    if (!overlayButton) return;
+    overlayButton.style.visibility = 'hidden';
+    overlayButton.style.opacity = '0';
+    overlayButton.style.pointerEvents = 'none';
+  };
 
   const isAllowedPage = () => {
     try {
@@ -51,11 +59,13 @@
   };
 
   const updateOverlayHoverState = () => {
-    if (!overlayButton) return;
+    if (!overlayButton || suppressed) {
+      hideOverlayButton();
+      return;
+    }
     const rect = lastVideoRect;
     if (!rect) {
-      overlayButton.style.opacity = '0';
-      overlayButton.style.pointerEvents = 'none';
+      hideOverlayButton();
       return;
     }
     const inside = lastMouseX >= rect.left && lastMouseX <= rect.right && lastMouseY >= rect.top && lastMouseY <= rect.bottom;
@@ -64,18 +74,19 @@
   };
 
   const positionOverlayToggle = () => {
-    if (!overlayButton) return;
+    if (!overlayButton || suppressed) {
+      hideOverlayButton();
+      return;
+    }
     if (!isAllowedPage()) {
-      overlayButton.style.visibility = 'hidden';
       lastVideoRect = null;
-      updateOverlayHoverState();
+      hideOverlayButton();
       return;
     }
     const best = getPrimaryVideo();
     if (!best) {
-      overlayButton.style.visibility = 'hidden';
       lastVideoRect = null;
-      updateOverlayHoverState();
+      hideOverlayButton();
       return;
     }
     lastVideoRect = best.rect;
@@ -96,7 +107,7 @@
   };
 
   const updateInlineToggleState = () => {
-    if (!overlayButton) return;
+    if (!overlayButton || suppressed) return;
     const enabled = Boolean(config.isEnabled());
     overlayButton.textContent = enabled ? 'Enhanced' : 'Enhance';
     if (enabled) {
@@ -114,12 +125,8 @@
   };
 
   const ensureOverlayToggle = () => {
-    if (!isAllowedPage()) {
-      if (overlayButton) {
-        overlayButton.style.visibility = 'hidden';
-        overlayButton.style.opacity = '0';
-        overlayButton.style.pointerEvents = 'none';
-      }
+    if (suppressed || !isAllowedPage()) {
+      hideOverlayButton();
       return null;
     }
     if (!overlayButton) {
@@ -222,13 +229,28 @@
     config = { ...defaultConfig, ...options };
     installSpaHooks();
     attachGlobalListeners();
-    ensureOverlayToggle();
-    requestPosition();
+    if (!suppressed) {
+      ensureOverlayToggle();
+      requestPosition();
+    }
   };
 
   overlayApi.ensure = ensureOverlayToggle;
   overlayApi.updateState = updateInlineToggleState;
   overlayApi.requestPosition = requestPosition;
+  overlayApi.setSuppressed = (value) => {
+    const next = Boolean(value);
+    if (next === suppressed) {
+      return;
+    }
+    suppressed = next;
+    if (suppressed) {
+      hideOverlayButton();
+    } else {
+      ensureOverlayToggle();
+      requestPosition();
+    }
+  };
 
   VN.overlay = overlayApi;
 })();

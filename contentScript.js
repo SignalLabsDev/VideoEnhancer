@@ -53,7 +53,8 @@
 
   let panelNode = null;
   let mainToggleButton = null;
-  let compatibilityToggleButton = null;
+  let compatibilityToggleInput = null;
+  let overlayToggleInput = null;
 
   const ensureFloatingToggle = () => {
     if (!floatingToggle) {
@@ -273,8 +274,11 @@
     applyPanelPosition();
     updatePanelVisibility();
     setButtonState(mainToggleButton, state.enabled, 'ON', 'OFF');
-    if (compatibilityToggleButton) {
-      setButtonState(compatibilityToggleButton, state.compatibilityMode, 'Compatibility: On', 'Compatibility: Off');
+    if (compatibilityToggleInput) {
+      compatibilityToggleInput.checked = state.compatibilityMode;
+    }
+    if (overlayToggleInput) {
+      overlayToggleInput.checked = state.overlayEnabled;
     }
     syncSliders();
     updateCompatibilityState();
@@ -327,8 +331,8 @@
     }
   };
 
-  const handleCompatibilityToggle = () => {
-    const willEnable = !state.compatibilityMode;
+  const handleCompatibilityToggle = (event) => {
+    const willEnable = event?.target?.checked ?? !state.compatibilityMode;
     debugLog('Compatibility toggle clicked', { willEnable });
     state.compatibilityMode = willEnable;
     syncUI();
@@ -336,6 +340,15 @@
     if (state.enabled) {
       scheduleRefresh('compatibility-toggle');
     }
+  };
+
+  const handleOverlayToggle = (event) => {
+    const willEnable = event?.target?.checked ?? !state.overlayEnabled;
+    debugLog('Overlay visibility toggle clicked', { willEnable });
+    state.overlayEnabled = willEnable;
+    overlayApi?.setSuppressed?.(!state.overlayEnabled);
+    syncUI();
+    schedulePersist('overlay-toggle');
   };
 
   const updateInlineToggleState = () => {
@@ -396,10 +409,6 @@
       </div>
       <div id="video-enhancer-tab-custom" class="video-enhancer-tab-content" role="tabpanel" data-video-enhancer-content="custom" aria-hidden="true">
         <div class="video-enhancer-slider-group">
-          <button id="video-enhancer-compatibility-toggle" type="button" class="video-enhancer-primary-button">Compatibility: Off</button>
-          <p class="video-enhancer-note video-enhancer-help-text">Disable sharpness for better performance</p>
-        </div>
-        <div class="video-enhancer-slider-group">
           <label class="video-enhancer-slider-label" for="video-enhancer-custom-sharpen">
             <span>Sharpen</span>
             <span id="video-enhancer-custom-sharpen-value">30%</span>
@@ -434,13 +443,24 @@
           </label>
           <input id="video-enhancer-custom-gamma" type="range" min="50" max="200" step="1" value="110" />
         </div>
+        <div class="video-enhancer-toggle-list">
+          <label class="video-enhancer-toggle" for="video-enhancer-compatibility-toggle">
+            <input id="video-enhancer-compatibility-toggle" type="checkbox" />
+            <span>Compatibility mode</span>
+          </label>
+          <label class="video-enhancer-toggle" for="video-enhancer-overlay-toggle">
+            <input id="video-enhancer-overlay-toggle" type="checkbox" />
+            <span>Show overlay button on hover</span>
+          </label>
+        </div>
       </div>
     `;
 
     document.documentElement.appendChild(panelNode);
 
     mainToggleButton = panelNode.querySelector('#video-enhancer-main-toggle');
-    compatibilityToggleButton = panelNode.querySelector('#video-enhancer-compatibility-toggle');
+    compatibilityToggleInput = panelNode.querySelector('#video-enhancer-compatibility-toggle');
+    overlayToggleInput = panelNode.querySelector('#video-enhancer-overlay-toggle');
 
     sliderInputs.sharpen = panelNode.querySelector('#video-enhancer-custom-sharpen');
     sliderInputs.contrast = panelNode.querySelector('#video-enhancer-custom-contrast');
@@ -536,7 +556,8 @@
     });
 
     mainToggleButton?.addEventListener('click', handleMainToggle);
-    compatibilityToggleButton?.addEventListener('click', handleCompatibilityToggle);
+    compatibilityToggleInput?.addEventListener('change', handleCompatibilityToggle);
+    overlayToggleInput?.addEventListener('change', handleOverlayToggle);
 
     sliderInputs.sharpen?.addEventListener('input', (event) => handleSliderInput('sharpen', event));
     sliderInputs.contrast?.addEventListener('input', (event) => handleSliderInput('contrast', event));
@@ -647,6 +668,7 @@
           scheduleRefresh('inline-toggle');
         }
       });
+      overlayApi.setSuppressed?.(!state.overlayEnabled);
     }
   };
 

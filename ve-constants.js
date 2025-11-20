@@ -33,6 +33,7 @@
     panelVisible: false,
     activeTab: 'preset',
     compatibilityMode: false,
+    overlayEnabled: true,
     settings: { ...VN.DEFAULT_SETTINGS },
     panelPosition: { useCustom: false, top: 80, left: null }
   };
@@ -54,6 +55,7 @@
       panelVisible: VN.state.panelVisible,
       activeTab: VN.state.activeTab,
       compatibilityMode: VN.state.compatibilityMode,
+      overlayEnabled: VN.state.overlayEnabled,
       settings: { ...VN.state.settings },
       panelPosition: { ...VN.state.panelPosition }
     }
@@ -82,6 +84,7 @@
           if (typeof snapshot.panelVisible === 'boolean') VN.state.panelVisible = snapshot.panelVisible;
           if (snapshot.activeTab === 'custom' || snapshot.activeTab === 'preset') VN.state.activeTab = snapshot.activeTab;
           if (typeof snapshot.compatibilityMode === 'boolean') VN.state.compatibilityMode = snapshot.compatibilityMode;
+          if (typeof snapshot.overlayEnabled === 'boolean') VN.state.overlayEnabled = snapshot.overlayEnabled;
           const src = (snapshot.settings && typeof snapshot.settings === 'object') ? snapshot.settings : null;
           if (src) {
             const restored = { ...VN.DEFAULT_SETTINGS };
