@@ -110,10 +110,20 @@
     if (!overlayButton || suppressed) return;
     const enabled = Boolean(config.isEnabled());
     overlayButton.textContent = enabled ? 'Enhanced' : 'Enhance';
+    const isKick = isAllowedPage() && (location.hostname || '').toLowerCase().includes('kick.com');
+    
     if (enabled) {
-      overlayButton.style.setProperty('background-image', 'linear-gradient(135deg, #3ea6ff, #2481ff)', 'important');
-      overlayButton.style.setProperty('box-shadow', '0 8px 18px rgba(36, 129, 255, 0.35)', 'important');
-      overlayButton.style.setProperty('color', '#ffffff', 'important');
+      if (isKick) {
+        overlayButton.style.setProperty('background-image', 'none', 'important');
+        overlayButton.style.setProperty('background-color', 'rgba(83, 252, 24, 1)', 'important');
+        overlayButton.style.setProperty('color', '#000000', 'important');
+        overlayButton.style.setProperty('box-shadow', '0 8px 18px rgba(83, 252, 24, 0.35)', 'important');
+      } else {
+        overlayButton.style.setProperty('background-image', 'linear-gradient(135deg, #3ea6ff, #2481ff)', 'important');
+        overlayButton.style.setProperty('background-color', 'transparent', 'important');
+        overlayButton.style.setProperty('color', '#ffffff', 'important');
+        overlayButton.style.setProperty('box-shadow', '0 8px 18px rgba(36, 129, 255, 0.35)', 'important');
+      }
       overlayButton.style.setProperty('border-color', 'transparent', 'important');
     } else {
       overlayButton.style.setProperty('background-image', 'none', 'important');

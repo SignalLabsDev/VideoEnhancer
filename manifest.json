@@ -36,7 +36,7 @@
         "https://www.twitch.tv/*",
         "https://kick.com/*"
       ],
-      "js": ["ve-constants.js", "ve-filters.js", "ve-overlay.js", "contentScript.js"],
+      "js": ["ve-constants.js", "ve-filters.js", "ve-overlay.js", "ve-panel.js", "contentScript.js"],
       "css": ["contentStyles.css"],
       "run_at": "document_idle"
     }

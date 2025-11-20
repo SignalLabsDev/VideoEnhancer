@@ -110,4 +110,14 @@
     if (!state.enabled) { VN.updateAllVideos(null); return; }
     const s = state.settings; VN.ensureFilter(); VN.updateKernel(s.sharpen); VN.updateAllVideos(s);
   };
+
+  let refreshScheduled = false;
+  VN.scheduleRefresh = (reason) => {
+    if (refreshScheduled) return;
+    refreshScheduled = true;
+    requestAnimationFrame(() => {
+      refreshScheduled = false;
+      VN.refreshEffect();
+    });
+  };
 })();
