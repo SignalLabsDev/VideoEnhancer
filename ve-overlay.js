@@ -110,7 +110,10 @@
     if (!overlayButton || suppressed) return;
     const enabled = Boolean(config.isEnabled());
     overlayButton.textContent = enabled ? 'Enhanced' : 'Enhance';
-    const isKick = isAllowedPage() && (location.hostname || '').toLowerCase().includes('kick.com');
+    const host = (location.hostname || '').toLowerCase();
+    const isKick = isAllowedPage() && host.includes('kick.com');
+    const isTwitch = isAllowedPage() && host.includes('twitch.tv');
+    const isYouTube = isAllowedPage() && host.includes('youtube');
     
     if (enabled) {
       if (isKick) {
@@ -118,6 +121,16 @@
         overlayButton.style.setProperty('background-color', 'rgba(83, 252, 24, 1)', 'important');
         overlayButton.style.setProperty('color', '#000000', 'important');
         overlayButton.style.setProperty('box-shadow', '0 8px 18px rgba(83, 252, 24, 0.35)', 'important');
+      } else if (isTwitch) {
+        overlayButton.style.setProperty('background-image', 'none', 'important');
+        overlayButton.style.setProperty('background-color', '#9146ff', 'important'); // Twitch Purple
+        overlayButton.style.setProperty('color', '#ffffff', 'important');
+        overlayButton.style.setProperty('box-shadow', '0 8px 18px rgba(145, 70, 255, 0.35)', 'important');
+      } else if (isYouTube) {
+        overlayButton.style.setProperty('background-image', 'none', 'important');
+        overlayButton.style.setProperty('background-color', '#ff0000', 'important'); // YouTube Red
+        overlayButton.style.setProperty('color', '#ffffff', 'important');
+        overlayButton.style.setProperty('box-shadow', '0 8px 18px rgba(255, 0, 0, 0.35)', 'important');
       } else {
         overlayButton.style.setProperty('background-image', 'linear-gradient(135deg, #3ea6ff, #2481ff)', 'important');
         overlayButton.style.setProperty('background-color', 'transparent', 'important');
@@ -196,6 +209,21 @@
     lastVideoRect = null;
     ensureOverlayToggle();
     requestPosition();
+    
+    // Poll for a few seconds to catch delayed video rendering in SPAs (like Twitch)
+    let attempts = 0;
+    const maxAttempts = 10;
+    const interval = setInterval(() => {
+      attempts++;
+      const found = getPrimaryVideo();
+      if (found) {
+        ensureOverlayToggle();
+        requestPosition();
+        clearInterval(interval);
+      } else if (attempts >= maxAttempts) {
+        clearInterval(interval);
+      }
+    }, 500);
   };
 
   const installSpaHooks = () => {
@@ -243,6 +271,22 @@
       ensureOverlayToggle();
       requestPosition();
     }
+
+    // Watchdog: Periodically ensure overlay is present and positioned on valid pages
+    // This handles cases where SPA events fire before the DOM is ready or are missed
+    setInterval(() => {
+      if (!suppressed && isAllowedPage()) {
+        // Force a check for the primary video
+        const best = getPrimaryVideo();
+        if (best) {
+           // If we have a video, ensure button exists and update position
+           // We don't check if it's already visible to avoid fighting with logic that hides it,
+           // but ensureOverlayToggle handles creation/unhiding if valid.
+           ensureOverlayToggle();
+           requestPosition();
+        }
+      }
+    }, 2000);
   };
 
   overlayApi.ensure = ensureOverlayToggle;

@@ -1,6 +1,6 @@
 # Video Enhancer
 
-Give YouTube, Twitch, and Kick streams a sharper, more vivid look with a single click or fine-tuned controls.
+Open source and lightweight video enhancer for Twitch, YouTube, and Kick. Give streams a sharper, more vivid look with a single click or fine-tuned controls.
 
 ## Key Features
 
