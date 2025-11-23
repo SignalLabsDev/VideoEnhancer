@@ -3,7 +3,7 @@
   const overlayApi = {};
   const defaultConfig = {
     isEnabled: () => false,
-    onToggle: () => {}
+    onToggle: () => { }
   };
 
   let config = { ...defaultConfig };
@@ -37,7 +37,7 @@
       if (host.includes('kick.com')) {
         return /^\/[^\/?#]+\/?$/.test(path) && path !== '/';
       }
-    } catch (_) {}
+    } catch (_) { }
     return false;
   };
 
@@ -114,34 +114,29 @@
     const isKick = isAllowedPage() && host.includes('kick.com');
     const isTwitch = isAllowedPage() && host.includes('twitch.tv');
     const isYouTube = isAllowedPage() && host.includes('youtube');
-    
+
     if (enabled) {
       if (isKick) {
         overlayButton.style.setProperty('background-image', 'none', 'important');
         overlayButton.style.setProperty('background-color', 'rgba(83, 252, 24, 1)', 'important');
         overlayButton.style.setProperty('color', '#000000', 'important');
-        overlayButton.style.setProperty('box-shadow', '0 8px 18px rgba(83, 252, 24, 0.35)', 'important');
       } else if (isTwitch) {
         overlayButton.style.setProperty('background-image', 'none', 'important');
         overlayButton.style.setProperty('background-color', '#9146ff', 'important'); // Twitch Purple
         overlayButton.style.setProperty('color', '#ffffff', 'important');
-        overlayButton.style.setProperty('box-shadow', '0 8px 18px rgba(145, 70, 255, 0.35)', 'important');
       } else if (isYouTube) {
         overlayButton.style.setProperty('background-image', 'none', 'important');
         overlayButton.style.setProperty('background-color', '#ff0000', 'important'); // YouTube Red
         overlayButton.style.setProperty('color', '#ffffff', 'important');
-        overlayButton.style.setProperty('box-shadow', '0 8px 18px rgba(255, 0, 0, 0.35)', 'important');
       } else {
         overlayButton.style.setProperty('background-image', 'linear-gradient(135deg, #3ea6ff, #2481ff)', 'important');
         overlayButton.style.setProperty('background-color', 'transparent', 'important');
         overlayButton.style.setProperty('color', '#ffffff', 'important');
-        overlayButton.style.setProperty('box-shadow', '0 8px 18px rgba(36, 129, 255, 0.35)', 'important');
       }
       overlayButton.style.setProperty('border-color', 'transparent', 'important');
     } else {
       overlayButton.style.setProperty('background-image', 'none', 'important');
       overlayButton.style.setProperty('background-color', 'rgba(255, 255, 255, 0.1)', 'important');
-      overlayButton.style.setProperty('box-shadow', 'inset 0 0 0 1px rgba(255, 255, 255, 0.12)', 'important');
       overlayButton.style.setProperty('color', 'rgba(208, 211, 220, 0.9)', 'important');
       overlayButton.style.setProperty('border-color', 'transparent', 'important');
     }
@@ -178,8 +173,7 @@
         justify-content: center;
         visibility: hidden;
         opacity: 0;
-        transition: opacity 120ms ease, box-shadow 120ms ease;
-        box-shadow: 0 8px 18px rgba(92, 109, 244, 0.35);
+        transition: opacity 120ms ease;
       `;
       overlayButton.addEventListener('click', () => {
         try {
@@ -209,7 +203,7 @@
     lastVideoRect = null;
     ensureOverlayToggle();
     requestPosition();
-    
+
     // Poll for a few seconds to catch delayed video rendering in SPAs (like Twitch)
     let attempts = 0;
     const maxAttempts = 10;
@@ -279,11 +273,11 @@
         // Force a check for the primary video
         const best = getPrimaryVideo();
         if (best) {
-           // If we have a video, ensure button exists and update position
-           // We don't check if it's already visible to avoid fighting with logic that hides it,
-           // but ensureOverlayToggle handles creation/unhiding if valid.
-           ensureOverlayToggle();
-           requestPosition();
+          // If we have a video, ensure button exists and update position
+          // We don't check if it's already visible to avoid fighting with logic that hides it,
+          // but ensureOverlayToggle handles creation/unhiding if valid.
+          ensureOverlayToggle();
+          requestPosition();
         }
       }
     }, 2000);
