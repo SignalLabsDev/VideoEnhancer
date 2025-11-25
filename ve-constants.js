@@ -29,7 +29,7 @@
   });
 
   VN.state = {
-    enabled: false,
+    enabled: true,
     panelVisible: false,
     activeTab: 'preset',
     compatibilityMode: false,

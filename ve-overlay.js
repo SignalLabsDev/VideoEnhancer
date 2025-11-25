@@ -7,7 +7,9 @@
   };
 
   let config = { ...defaultConfig };
-  let overlayButton = null;
+  let overlayButton = null; // container for the two-button overlay
+  let toggleButton = null;  // left on/off button
+  let settingsButton = null; // right settings button
   let lastVideoRect = null;
   let lastMouseX = 0;
   let lastMouseY = 0;
@@ -107,38 +109,58 @@
   };
 
   const updateInlineToggleState = () => {
-    if (!overlayButton || suppressed) return;
+    if (!toggleButton || !settingsButton || suppressed) return;
     const enabled = Boolean(config.isEnabled());
-    overlayButton.textContent = enabled ? 'Enhanced' : 'Enhance';
     const host = (location.hostname || '').toLowerCase();
     const isKick = isAllowedPage() && host.includes('kick.com');
     const isTwitch = isAllowedPage() && host.includes('twitch.tv');
     const isYouTube = isAllowedPage() && host.includes('youtube');
 
+    // Settings button: always look "on" using site-specific colors
+    if (isKick) {
+      settingsButton.style.setProperty('background-image', 'none', 'important');
+      settingsButton.style.setProperty('background-color', 'rgba(83, 252, 24, 1)', 'important');
+      settingsButton.style.setProperty('color', '#000000', 'important');
+    } else if (isTwitch) {
+      settingsButton.style.setProperty('background-image', 'none', 'important');
+      settingsButton.style.setProperty('background-color', '#9146ff', 'important');
+      settingsButton.style.setProperty('color', '#ffffff', 'important');
+    } else if (isYouTube) {
+      settingsButton.style.setProperty('background-image', 'none', 'important');
+      settingsButton.style.setProperty('background-color', '#ff0000', 'important');
+      settingsButton.style.setProperty('color', '#ffffff', 'important');
+    } else {
+      settingsButton.style.setProperty('background-image', 'linear-gradient(135deg, #3ea6ff, #2481ff)', 'important');
+      settingsButton.style.setProperty('background-color', 'transparent', 'important');
+      settingsButton.style.setProperty('color', '#ffffff', 'important');
+    }
+    settingsButton.style.setProperty('border-color', 'transparent', 'important');
+
+    // Toggle button: reflects enabled/disabled state
     if (enabled) {
       if (isKick) {
-        overlayButton.style.setProperty('background-image', 'none', 'important');
-        overlayButton.style.setProperty('background-color', 'rgba(83, 252, 24, 1)', 'important');
-        overlayButton.style.setProperty('color', '#000000', 'important');
+        toggleButton.style.setProperty('background-image', 'none', 'important');
+        toggleButton.style.setProperty('background-color', 'rgba(83, 252, 24, 1)', 'important');
+        toggleButton.style.setProperty('color', '#000000', 'important');
       } else if (isTwitch) {
-        overlayButton.style.setProperty('background-image', 'none', 'important');
-        overlayButton.style.setProperty('background-color', '#9146ff', 'important'); // Twitch Purple
-        overlayButton.style.setProperty('color', '#ffffff', 'important');
+        toggleButton.style.setProperty('background-image', 'none', 'important');
+        toggleButton.style.setProperty('background-color', '#9146ff', 'important'); // Twitch Purple
+        toggleButton.style.setProperty('color', '#ffffff', 'important');
       } else if (isYouTube) {
-        overlayButton.style.setProperty('background-image', 'none', 'important');
-        overlayButton.style.setProperty('background-color', '#ff0000', 'important'); // YouTube Red
-        overlayButton.style.setProperty('color', '#ffffff', 'important');
+        toggleButton.style.setProperty('background-image', 'none', 'important');
+        toggleButton.style.setProperty('background-color', '#ff0000', 'important'); // YouTube Red
+        toggleButton.style.setProperty('color', '#ffffff', 'important');
       } else {
-        overlayButton.style.setProperty('background-image', 'linear-gradient(135deg, #3ea6ff, #2481ff)', 'important');
-        overlayButton.style.setProperty('background-color', 'transparent', 'important');
-        overlayButton.style.setProperty('color', '#ffffff', 'important');
+        toggleButton.style.setProperty('background-image', 'linear-gradient(135deg, #3ea6ff, #2481ff)', 'important');
+        toggleButton.style.setProperty('background-color', 'transparent', 'important');
+        toggleButton.style.setProperty('color', '#ffffff', 'important');
       }
-      overlayButton.style.setProperty('border-color', 'transparent', 'important');
+      toggleButton.style.setProperty('border-color', 'transparent', 'important');
     } else {
-      overlayButton.style.setProperty('background-image', 'none', 'important');
-      overlayButton.style.setProperty('background-color', 'rgba(255, 255, 255, 0.1)', 'important');
-      overlayButton.style.setProperty('color', 'rgba(208, 211, 220, 0.9)', 'important');
-      overlayButton.style.setProperty('border-color', 'transparent', 'important');
+      toggleButton.style.setProperty('background-image', 'none', 'important');
+      toggleButton.style.setProperty('background-color', 'rgba(255, 255, 255, 0.1)', 'important');
+      toggleButton.style.setProperty('color', 'rgba(208, 211, 220, 0.9)', 'important');
+      toggleButton.style.setProperty('border-color', 'transparent', 'important');
     }
   };
 
@@ -148,40 +170,81 @@
       return null;
     }
     if (!overlayButton) {
-      overlayButton = document.createElement('button');
+      overlayButton = document.createElement('div');
       overlayButton.id = 'video-enhancer-inline-toggle';
-      overlayButton.type = 'button';
-      overlayButton.textContent = 'Enhance';
       overlayButton.style.cssText = `
         position: fixed !important;
         z-index: 2147483646 !important;
         top: -9999px;
         right: -9999px;
-        min-width: 96px;
         height: 38px;
-        padding: 0 16px;
-        border-radius: 11px;
-        border: 1px solid transparent;
-        background-image: linear-gradient(135deg, #3ea6ff, #2481ff);
-        color: #ffffff;
-        font-family: inherit;
-        font-size: 14px;
-        font-weight: 600;
-        line-height: 38px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
         visibility: hidden;
         opacity: 0;
         transition: opacity 120ms ease;
+        pointer-events: none;
+        gap: 6px;
       `;
-      overlayButton.addEventListener('click', () => {
+
+      toggleButton = document.createElement('button');
+      toggleButton.type = 'button';
+      toggleButton.textContent = '⏻';
+      toggleButton.style.cssText = `
+        width: 38px;
+        height: 38px;
+        padding: 0;
+        border: 1px solid transparent;
+        border-radius: 11px;
+        background-image: linear-gradient(135deg, #3ea6ff, #2481ff);
+        color: #ffffff;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font-size: 20px;
+        font-weight: 700;
+        line-height: 38px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      `;
+      toggleButton.addEventListener('click', (event) => {
+        event.stopPropagation();
         try {
           config.onToggle();
         } finally {
           updateInlineToggleState();
         }
       });
+
+      settingsButton = document.createElement('button');
+      settingsButton.type = 'button';
+      settingsButton.textContent = '⚙';
+      settingsButton.style.cssText = `
+        width: 38px;
+        height: 38px;
+        padding: 0;
+        border: 1px solid transparent;
+        border-radius: 11px;
+        background-color: rgba(0, 0, 0, 0.5);
+        color: #ffffff;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font-size: 20px;
+        font-weight: 700;
+        line-height: 38px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      `;
+      settingsButton.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (VN.panel) {
+          VN.panel.ensure?.();
+          VN.panel.setVisible?.(true);
+        }
+      });
+
+      overlayButton.appendChild(toggleButton);
+      overlayButton.appendChild(settingsButton);
       (document.body || document.documentElement).appendChild(overlayButton);
     }
     updateInlineToggleState();
