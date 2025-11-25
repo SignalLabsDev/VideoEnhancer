@@ -16,11 +16,6 @@
     return 'default';
   })();
 
-  const debugLog = (msg, ...args) => {
-    // Uncomment for debugging
-    // console.log(`[VideoEnhancer] ${msg}`, ...args);
-  };
-
   // Mutation Observer logic
   const processNode = (node) => {
     if (node instanceof HTMLVideoElement) {
@@ -57,7 +52,6 @@
 
         mutation.addedNodes.forEach((node) => {
           processNode(node);
-          VN.overlay?.requestPosition?.();
         });
 
         if (SITE_VARIANT === 'youtube') {

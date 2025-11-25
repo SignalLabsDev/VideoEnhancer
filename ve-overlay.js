@@ -1,15 +1,11 @@
 (() => {
   const VN = window.VideoEnhancer || (window.VideoEnhancer = {});
   const overlayApi = {};
-  const defaultConfig = {
-    isEnabled: () => false,
-    onToggle: () => { }
-  };
 
-  let config = { ...defaultConfig };
-  let overlayButton = null; // container for the two-button overlay
-  let toggleButton = null;  // left on/off button
-  let settingsButton = null; // right settings button
+  let config = { isEnabled: () => false, onToggle: () => {} };
+  let overlayButton = null;
+  let toggleButton = null;
+  let settingsButton = null;
   let lastVideoRect = null;
   let lastMouseX = 0;
   let lastMouseY = 0;
@@ -18,349 +14,201 @@
   let spaHooksInstalled = false;
   let suppressed = false;
 
-  const hideOverlayButton = () => {
+  // Site detection helpers
+  const getHost = () => (location.hostname || '').toLowerCase();
+  const getPath = () => location.pathname || '/';
+
+  const getSiteType = () => {
+    const host = getHost();
+    const path = getPath();
+    if (host.includes('youtube') && path === '/watch') {
+      return new URLSearchParams(location.search || '').has('v') ? 'youtube' : null;
+    }
+    if (host.includes('twitch.tv') && /^\/[^\/?#]+\/?$/.test(path) && path !== '/') return 'twitch';
+    if (host.includes('kick.com') && /^\/[^\/?#]+\/?$/.test(path) && path !== '/') return 'kick';
+    return null;
+  };
+
+  const isAllowedPage = () => getSiteType() !== null;
+
+  // Site-specific styling
+  const ACTIVE_STYLE = { bg: 'rgba(15, 23, 42, 0.9)', color: '#9146ff' };
+
+  const DISABLED_STYLE = { bg: 'rgba(15, 23, 42, 0.9)', color: 'rgba(145, 70, 255, 0.4)' };
+
+  const applyButtonStyle = (btn, style) => {
+    btn.style.setProperty('background-image', 'none', 'important');
+    btn.style.setProperty('background-color', style.bg, 'important');
+    btn.style.setProperty('color', style.color, 'important');
+    btn.style.setProperty('border-color', 'transparent', 'important');
+  };
+
+  const hideOverlay = () => {
     if (!overlayButton) return;
     overlayButton.style.visibility = 'hidden';
     overlayButton.style.opacity = '0';
     overlayButton.style.pointerEvents = 'none';
   };
 
-  const isAllowedPage = () => {
-    try {
-      const host = (location.hostname || '').toLowerCase();
-      const path = location.pathname || '/';
-      if (host.includes('youtube') && path === '/watch') {
-        const sp = new URLSearchParams(location.search || '');
-        return sp.has('v');
-      }
-      if (host.includes('twitch.tv')) {
-        return /^\/[^\/?#]+\/?$/.test(path) && path !== '/';
-      }
-      if (host.includes('kick.com')) {
-        return /^\/[^\/?#]+\/?$/.test(path) && path !== '/';
-      }
-    } catch (_) { }
-    return false;
-  };
-
   const getPrimaryVideo = () => {
-    const videos = Array.from(document.querySelectorAll('video'))
-      .filter((v) => v instanceof HTMLVideoElement && v.offsetWidth > 0 && v.offsetHeight > 0);
-    if (!videos.length) return null;
-    let best = null;
-    let bestArea = 0;
-    videos.forEach((video) => {
-      const rect = video.getBoundingClientRect();
-      const area = Math.max(0, rect.width) * Math.max(0, rect.height);
-      if (area > bestArea) {
-        best = { video, rect };
-        bestArea = area;
+    let best = null, bestArea = 0;
+    document.querySelectorAll('video').forEach((v) => {
+      if (v.offsetWidth > 0 && v.offsetHeight > 0) {
+        const rect = v.getBoundingClientRect();
+        const area = rect.width * rect.height;
+        if (area > bestArea) { best = { video: v, rect }; bestArea = area; }
       }
     });
     return best;
   };
 
-  const updateOverlayHoverState = () => {
-    if (!overlayButton || suppressed) {
-      hideOverlayButton();
-      return;
-    }
-    const rect = lastVideoRect;
-    if (!rect) {
-      hideOverlayButton();
-      return;
-    }
-    const inside = lastMouseX >= rect.left && lastMouseX <= rect.right && lastMouseY >= rect.top && lastMouseY <= rect.bottom;
+  const updateHoverState = () => {
+    if (!overlayButton || suppressed || !lastVideoRect) { hideOverlay(); return; }
+    const r = lastVideoRect;
+    const inside = lastMouseX >= r.left && lastMouseX <= r.right && lastMouseY >= r.top && lastMouseY <= r.bottom;
     overlayButton.style.opacity = inside ? '1' : '0';
     overlayButton.style.pointerEvents = inside ? 'auto' : 'none';
   };
 
-  const positionOverlayToggle = () => {
-    if (!overlayButton || suppressed) {
-      hideOverlayButton();
-      return;
-    }
-    if (!isAllowedPage()) {
-      lastVideoRect = null;
-      hideOverlayButton();
-      return;
-    }
+  const positionOverlay = () => {
+    if (!overlayButton || suppressed || !isAllowedPage()) { lastVideoRect = null; hideOverlay(); return; }
     const best = getPrimaryVideo();
-    if (!best) {
-      lastVideoRect = null;
-      hideOverlayButton();
-      return;
-    }
+    if (!best) { lastVideoRect = null; hideOverlay(); return; }
     lastVideoRect = best.rect;
-    const top = Math.max(8, best.rect.top + 8);
-    const right = Math.max(8, (window.innerWidth - best.rect.right) + 8);
-    overlayButton.style.top = `${Math.round(top)}px`;
-    overlayButton.style.right = `${Math.round(right)}px`;
+    const margin = 8;
+    overlayButton.style.top = `${Math.max(margin, best.rect.top + margin)}px`;
+    overlayButton.style.right = `${Math.max(margin, window.innerWidth - best.rect.right + margin)}px`;
     overlayButton.style.visibility = 'visible';
-    updateOverlayHoverState();
+    updateHoverState();
   };
 
   const requestPosition = () => {
     if (repositionRAF) return;
-    repositionRAF = requestAnimationFrame(() => {
-      repositionRAF = null;
-      positionOverlayToggle();
-    });
+    repositionRAF = requestAnimationFrame(() => { repositionRAF = null; positionOverlay(); });
   };
 
-  const updateInlineToggleState = () => {
+  const updateButtonStyles = () => {
     if (!toggleButton || !settingsButton || suppressed) return;
-    const enabled = Boolean(config.isEnabled());
-    const host = (location.hostname || '').toLowerCase();
-    const isKick = isAllowedPage() && host.includes('kick.com');
-    const isTwitch = isAllowedPage() && host.includes('twitch.tv');
-    const isYouTube = isAllowedPage() && host.includes('youtube');
 
-    // Settings button: always look "on" using site-specific colors
-    if (isKick) {
-      settingsButton.style.setProperty('background-image', 'none', 'important');
-      settingsButton.style.setProperty('background-color', 'rgba(83, 252, 24, 1)', 'important');
-      settingsButton.style.setProperty('color', '#000000', 'important');
-    } else if (isTwitch) {
-      settingsButton.style.setProperty('background-image', 'none', 'important');
-      settingsButton.style.setProperty('background-color', '#9146ff', 'important');
-      settingsButton.style.setProperty('color', '#ffffff', 'important');
-    } else if (isYouTube) {
-      settingsButton.style.setProperty('background-image', 'none', 'important');
-      settingsButton.style.setProperty('background-color', '#ff0000', 'important');
-      settingsButton.style.setProperty('color', '#ffffff', 'important');
-    } else {
-      settingsButton.style.setProperty('background-image', 'linear-gradient(135deg, #3ea6ff, #2481ff)', 'important');
-      settingsButton.style.setProperty('background-color', 'transparent', 'important');
-      settingsButton.style.setProperty('color', '#ffffff', 'important');
-    }
-    settingsButton.style.setProperty('border-color', 'transparent', 'important');
+    // Settings button always uses active style
+    applyButtonStyle(settingsButton, ACTIVE_STYLE);
 
-    // Toggle button: reflects enabled/disabled state
-    if (enabled) {
-      if (isKick) {
-        toggleButton.style.setProperty('background-image', 'none', 'important');
-        toggleButton.style.setProperty('background-color', 'rgba(83, 252, 24, 1)', 'important');
-        toggleButton.style.setProperty('color', '#000000', 'important');
-      } else if (isTwitch) {
-        toggleButton.style.setProperty('background-image', 'none', 'important');
-        toggleButton.style.setProperty('background-color', '#9146ff', 'important'); // Twitch Purple
-        toggleButton.style.setProperty('color', '#ffffff', 'important');
-      } else if (isYouTube) {
-        toggleButton.style.setProperty('background-image', 'none', 'important');
-        toggleButton.style.setProperty('background-color', '#ff0000', 'important'); // YouTube Red
-        toggleButton.style.setProperty('color', '#ffffff', 'important');
-      } else {
-        toggleButton.style.setProperty('background-image', 'linear-gradient(135deg, #3ea6ff, #2481ff)', 'important');
-        toggleButton.style.setProperty('background-color', 'transparent', 'important');
-        toggleButton.style.setProperty('color', '#ffffff', 'important');
-      }
-      toggleButton.style.setProperty('border-color', 'transparent', 'important');
-    } else {
-      toggleButton.style.setProperty('background-image', 'none', 'important');
-      toggleButton.style.setProperty('background-color', 'rgba(255, 255, 255, 0.1)', 'important');
-      toggleButton.style.setProperty('color', 'rgba(208, 211, 220, 0.9)', 'important');
-      toggleButton.style.setProperty('border-color', 'transparent', 'important');
-    }
+    // Toggle button reflects enabled state
+    applyButtonStyle(toggleButton, config.isEnabled() ? ACTIVE_STYLE : DISABLED_STYLE);
   };
 
-  const ensureOverlayToggle = () => {
-    if (suppressed || !isAllowedPage()) {
-      hideOverlayButton();
-      return null;
-    }
-    if (!overlayButton) {
-      overlayButton = document.createElement('div');
-      overlayButton.id = 'video-enhancer-inline-toggle';
-      overlayButton.style.cssText = `
-        position: fixed !important;
-        z-index: 2147483646 !important;
-        top: -9999px;
-        right: -9999px;
-        height: 38px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        visibility: hidden;
-        opacity: 0;
-        transition: opacity 120ms ease;
-        pointer-events: none;
-        gap: 6px;
-      `;
+  const createOverlay = () => {
+    overlayButton = document.createElement('div');
+    overlayButton.id = 'video-enhancer-inline-toggle';
+    overlayButton.style.cssText = `
+      position: fixed !important; z-index: 2147483646 !important;
+      top: -9999px; right: -9999px; height: 38px;
+      display: inline-flex; align-items: center; gap: 6px;
+      visibility: hidden; opacity: 0; pointer-events: none;
+      transition: opacity 120ms ease;
+    `;
 
-      toggleButton = document.createElement('button');
-      toggleButton.type = 'button';
-      toggleButton.textContent = '⏻';
-      toggleButton.style.cssText = `
-        width: 38px;
-        height: 38px;
-        padding: 0;
-        border: 1px solid transparent;
-        border-radius: 11px;
-        background-image: linear-gradient(135deg, #3ea6ff, #2481ff);
-        color: #ffffff;
-        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        font-size: 20px;
-        font-weight: 700;
-        line-height: 38px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-      `;
-      toggleButton.addEventListener('click', (event) => {
-        event.stopPropagation();
-        try {
-          config.onToggle();
-        } finally {
-          updateInlineToggleState();
-        }
-      });
+    const btnStyle = `
+      width: 38px; height: 38px; padding: 0;
+      box-sizing: border-box;
+      border: 1px solid transparent; border-radius: 11px;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 20px; font-weight: 700;
+    `;
 
-      settingsButton = document.createElement('button');
-      settingsButton.type = 'button';
-      settingsButton.textContent = '⚙';
-      settingsButton.style.cssText = `
-        width: 38px;
-        height: 38px;
-        padding: 0;
-        border: 1px solid transparent;
-        border-radius: 11px;
-        background-color: rgba(0, 0, 0, 0.5);
-        color: #ffffff;
-        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        font-size: 20px;
-        font-weight: 700;
-        line-height: 38px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-      `;
-      settingsButton.addEventListener('click', (event) => {
-        event.stopPropagation();
-        if (VN.panel) {
-          VN.panel.ensure?.();
-          VN.panel.setVisible?.(true);
-        }
-      });
+    const createIconSpan = (char, options = {}) => {
+      const span = document.createElement('span');
+      span.textContent = char;
+      span.style.display = 'inline-block';
+      span.style.transform = 'translate(0.5px, -2px)';
+      if (options.bold) {
+        span.style.fontSize = '22px';
+        span.style.fontWeight = '800';
+      } else if (options.large) {
+        span.style.fontSize = '24px';
+      }
+      return span;
+    };
 
-      overlayButton.appendChild(toggleButton);
-      overlayButton.appendChild(settingsButton);
-      (document.body || document.documentElement).appendChild(overlayButton);
-    }
-    updateInlineToggleState();
-    positionOverlayToggle();
+    toggleButton = document.createElement('button');
+    toggleButton.type = 'button';
+    toggleButton.style.cssText = btnStyle;
+    toggleButton.appendChild(createIconSpan('⏻', { bold: true }));
+    toggleButton.onclick = (e) => { e.stopPropagation(); config.onToggle(); updateButtonStyles(); };
+
+    settingsButton = document.createElement('button');
+    settingsButton.type = 'button';
+    settingsButton.style.cssText = btnStyle;
+    settingsButton.appendChild(createIconSpan('⚙', { large: true }));
+    settingsButton.onclick = (e) => { e.stopPropagation(); VN.panel?.setVisible?.(true); };
+
+    overlayButton.append(toggleButton, settingsButton);
+    (document.body || document.documentElement).appendChild(overlayButton);
+  };
+
+  const ensureOverlay = () => {
+    if (suppressed || !isAllowedPage()) { hideOverlay(); return null; }
+    if (!overlayButton) createOverlay();
+    updateButtonStyles();
+    positionOverlay();
     return overlayButton;
   };
 
-  const handleMouseMove = (event) => {
-    lastMouseX = event.clientX;
-    lastMouseY = event.clientY;
+  const onMouseMove = (e) => {
+    lastMouseX = e.clientX;
+    lastMouseY = e.clientY;
     if (hoverRAF) return;
-    hoverRAF = requestAnimationFrame(() => {
-      hoverRAF = null;
-      updateOverlayHoverState();
-    });
+    hoverRAF = requestAnimationFrame(() => { hoverRAF = null; updateHoverState(); });
   };
 
-  const handleUrlChanged = () => {
+  const onUrlChange = () => {
     lastVideoRect = null;
-    ensureOverlayToggle();
-    requestPosition();
-
-    // Poll for a few seconds to catch delayed video rendering in SPAs (like Twitch)
+    ensureOverlay();
+    // Poll briefly for delayed video rendering in SPAs
     let attempts = 0;
-    const maxAttempts = 10;
-    const interval = setInterval(() => {
-      attempts++;
-      const found = getPrimaryVideo();
-      if (found) {
-        ensureOverlayToggle();
-        requestPosition();
-        clearInterval(interval);
-      } else if (attempts >= maxAttempts) {
-        clearInterval(interval);
-      }
+    const poll = setInterval(() => {
+      if (++attempts >= 10 || getPrimaryVideo()) { clearInterval(poll); ensureOverlay(); }
     }, 500);
   };
 
   const installSpaHooks = () => {
     if (spaHooksInstalled) return;
     spaHooksInstalled = true;
-    const notify = () => handleUrlChanged();
-    const originalPush = history.pushState;
-    const originalReplace = history.replaceState;
-    if (typeof originalPush === 'function') {
-      history.pushState = function pushStateWrapper() {
-        const result = originalPush.apply(this, arguments);
-        notify();
-        return result;
-      };
-    }
-    if (typeof originalReplace === 'function') {
-      history.replaceState = function replaceStateWrapper() {
-        const result = originalReplace.apply(this, arguments);
-        notify();
-        return result;
-      };
-    }
-    window.addEventListener('popstate', notify);
-    window.addEventListener('yt-navigate-finish', notify);
-    window.addEventListener('yt-page-data-updated', notify);
-    window.addEventListener('yt-navigate-start', notify);
-    document.addEventListener('yt-navigate-finish', notify, true);
-    document.addEventListener('yt-page-data-updated', notify, true);
-    document.addEventListener('yt-navigate-start', notify, true);
+
+    const wrap = (fn) => function() { const r = fn.apply(this, arguments); onUrlChange(); return r; };
+    if (typeof history.pushState === 'function') history.pushState = wrap(history.pushState);
+    if (typeof history.replaceState === 'function') history.replaceState = wrap(history.replaceState);
+
+    const events = ['popstate', 'yt-navigate-finish', 'yt-page-data-updated', 'yt-navigate-start'];
+    events.forEach((evt) => window.addEventListener(evt, onUrlChange));
   };
 
-  const attachGlobalListeners = () => {
+  const attachListeners = () => {
     window.addEventListener('scroll', requestPosition, true);
     window.addEventListener('resize', requestPosition);
-    window.addEventListener('orientationchange', requestPosition);
+    window.addEventListener('mousemove', onMouseMove, true);
     document.addEventListener('fullscreenchange', requestPosition, true);
-    window.addEventListener('mousemove', handleMouseMove, true);
   };
 
   overlayApi.init = (options = {}) => {
-    config = { ...defaultConfig, ...options };
+    config = { ...config, ...options };
     installSpaHooks();
-    attachGlobalListeners();
-    if (!suppressed) {
-      ensureOverlayToggle();
-      requestPosition();
-    }
+    attachListeners();
+    if (!suppressed) ensureOverlay();
 
-    // Watchdog: Periodically ensure overlay is present and positioned on valid pages
-    // This handles cases where SPA events fire before the DOM is ready or are missed
-    setInterval(() => {
-      if (!suppressed && isAllowedPage()) {
-        // Force a check for the primary video
-        const best = getPrimaryVideo();
-        if (best) {
-          // If we have a video, ensure button exists and update position
-          // We don't check if it's already visible to avoid fighting with logic that hides it,
-          // but ensureOverlayToggle handles creation/unhiding if valid.
-          ensureOverlayToggle();
-          requestPosition();
-        }
-      }
-    }, 2000);
+    // Watchdog for missed SPA events
+    setInterval(() => { if (!suppressed && isAllowedPage() && getPrimaryVideo()) ensureOverlay(); }, 2000);
   };
 
-  overlayApi.ensure = ensureOverlayToggle;
-  overlayApi.updateState = updateInlineToggleState;
+  overlayApi.ensure = ensureOverlay;
+  overlayApi.updateState = updateButtonStyles;
   overlayApi.requestPosition = requestPosition;
   overlayApi.setSuppressed = (value) => {
     const next = Boolean(value);
-    if (next === suppressed) {
-      return;
-    }
+    if (next === suppressed) return;
     suppressed = next;
-    if (suppressed) {
-      hideOverlayButton();
-    } else {
-      ensureOverlayToggle();
-      requestPosition();
-    }
+    suppressed ? hideOverlay() : ensureOverlay();
   };
 
   VN.overlay = overlayApi;

@@ -82,6 +82,7 @@
   background: rgba(255, 255, 255, 0.08);
   color: rgba(245, 247, 250, 0.82);
   font-weight: 600;
+  font-size: 13px;
   cursor: pointer;
   transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease;
 }
@@ -105,8 +106,7 @@
   display: block;
 }
 
-.video-enhancer-primary-button,
-.video-enhancer-secondary-button {
+.video-enhancer-primary-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -148,26 +148,12 @@
   box-shadow: 0 14px 28px rgba(80, 90, 255, 0.3);
 }
 
-.video-enhancer-secondary-button {
-  width: 100%;
-  padding: 8px 12px;
-  border-radius: 10px;
-  background: linear-gradient(135deg, #4caf50, #388e3c);
-  box-shadow: 0 8px 20px rgba(76, 175, 80, 0.3);
-  font-size: 13px;
-}
-
-.video-enhancer-secondary-button:hover {
-  box-shadow: 0 12px 24px rgba(76, 175, 80, 0.4);
-}
-
 .video-enhancer-button-off {
   background: rgba(255, 255, 255, 0.1) !important;
   color: rgba(208, 211, 220, 0.9) !important;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12) !important;
   transform: none !important;
 }
-
 
 .video-enhancer-slider-group {
   margin-bottom: 14px;
@@ -334,148 +320,4 @@
     opacity: 1;
     transform: translateY(0);
   }
-}
-
-/* Inline Toggle Buttons - positioned below the video player */
-#video-enhancer-inline-toggle-container {
-  position: absolute;
-  bottom: -48px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 2147483646;
-  /* High z-index to appear above video controls */
-  animation: video-enhancer-fade-in 0.3s ease;
-}
-
-/* YouTube specific styling */
-.video-enhancer-inline-toggle-youtube {
-  bottom: -56px !important;
-}
-
-.video-enhancer-inline-toggle.video-enhancer-inline-toggle-youtube {
-  background: #FF0000;
-  color: #ffffff;
-  border: 1px solid #FF0000;
-  border-radius: 20px;
-  padding: 6px 16px;
-  font-size: 13px;
-  font-weight: 500;
-  font-family: 'Roboto', sans-serif;
-  transition: all 0.2s ease;
-}
-
-.video-enhancer-inline-toggle.video-enhancer-inline-toggle-youtube:hover {
-  background: #CC0000;
-  transform: translateY(-1px);
-}
-
-.video-enhancer-inline-toggle.video-enhancer-inline-toggle-youtube:active {
-  transform: translateY(0);
-}
-
-.video-enhancer-inline-toggle.video-enhancer-inline-toggle-youtube.video-enhancer-inline-toggle-active {
-  background: #CC0000;
-  color: white;
-  border-color: #CC0000;
-}
-
-.video-enhancer-inline-toggle.video-enhancer-inline-toggle-youtube.video-enhancer-inline-toggle-active:hover {
-  background: #990000;
-}
-
-/* Twitch specific styling */
-.video-enhancer-inline-toggle-twitch {
-  bottom: -52px !important;
-}
-
-.video-enhancer-inline-toggle.video-enhancer-inline-toggle-twitch {
-  background: #FF0000;
-  color: #ffffff;
-  border: 1px solid #FF0000;
-  border-radius: 6px;
-  padding: 4px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  font-family: 'Inter', sans-serif;
-  transition: all 0.2s ease;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.video-enhancer-inline-toggle.video-enhancer-inline-toggle-twitch:hover {
-  background: #CC0000;
-  border-color: #CC0000;
-  transform: translateY(-1px);
-}
-
-.video-enhancer-inline-toggle.video-enhancer-inline-toggle-twitch:active {
-  transform: translateY(0);
-}
-
-.video-enhancer-inline-toggle.video-enhancer-inline-toggle-twitch.video-enhancer-inline-toggle-active {
-  background: #CC0000;
-  color: white;
-  border-color: #CC0000;
-}
-
-.video-enhancer-inline-toggle.video-enhancer-inline-toggle-twitch.video-enhancer-inline-toggle-active:hover {
-  background: #990000;
-}
-
-/* Kick specific styling */
-.video-enhancer-inline-toggle-kick {
-  bottom: -50px !important;
-}
-
-.video-enhancer-inline-toggle.video-enhancer-inline-toggle-kick {
-  background: #FF0000;
-  color: #ffffff;
-  border: 1px solid #FF0000;
-  border-radius: 8px;
-  padding: 5px 14px;
-  font-size: 12px;
-  font-weight: 600;
-  font-family: 'Inter', sans-serif;
-  transition: all 0.2s ease;
-}
-
-.video-enhancer-inline-toggle.video-enhancer-inline-toggle-kick:hover {
-  background: #CC0000;
-  border-color: #CC0000;
-  transform: translateY(-1px);
-}
-
-.video-enhancer-inline-toggle.video-enhancer-inline-toggle-kick:active {
-  transform: translateY(0);
-}
-
-.video-enhancer-inline-toggle.video-enhancer-inline-toggle-kick.video-enhancer-inline-toggle-active {
-  background: #CC0000;
-  color: white;
-  border-color: #CC0000;
-}
-
-.video-enhancer-inline-toggle.video-enhancer-inline-toggle-kick.video-enhancer-inline-toggle-active:hover {
-  background: #990000;
-}
-
-/* General inline toggle styles */
-.video-enhancer-inline-toggle {
-  position: relative;
-  display: inline-block;
-  cursor: pointer;
-  user-select: none;
-  white-space: nowrap;
-  outline: none;
-  transition: all 0.2s ease;
-}
-
-.video-enhancer-inline-toggle:focus {
-  outline: 2px solid #007acc;
-  outline-offset: 2px;
-}
-
-.video-enhancer-inline-toggle:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
