@@ -141,7 +141,11 @@
     settingsButton.type = 'button';
     settingsButton.style.cssText = btnStyle;
     settingsButton.appendChild(createIconSpan('⚙', { large: true }));
-    settingsButton.onclick = (e) => { e.stopPropagation(); VN.panel?.setVisible?.(true); };
+    settingsButton.onclick = (e) => {
+      e.stopPropagation();
+      const current = !!window.VideoEnhancer?.state?.panelVisible;
+      VN.panel?.setVisible?.(!current);
+    };
 
     overlayButton.append(toggleButton, settingsButton);
     (document.body || document.documentElement).appendChild(overlayButton);
