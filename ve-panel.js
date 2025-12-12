@@ -8,6 +8,145 @@
   let compatibilityToggleInput = null;
   let overlayToggleInput = null;
 
+  const isTopFrame = (() => {
+    try {
+      return window.top === window;
+    } catch (_) {
+      return true;
+    }
+  })();
+
+  if (!isTopFrame) {
+    panelApi.ensure = () => {};
+    panelApi.syncUI = () => {};
+    panelApi.setVisible = () => {
+      try {
+        window.top.postMessage({ __videoEnhancer: true, type: 'VIDEO_ENHANCER_TOGGLE_PANEL' }, '*');
+      } catch (_) {}
+    };
+    panelApi.toggle = () => panelApi.setVisible();
+
+    const buildLocalSyncState = () => ({
+      enabled: state.enabled,
+      compatibilityMode: state.compatibilityMode,
+      overlayEnabled: state.overlayEnabled,
+      settings: { ...state.settings }
+    });
+
+    const broadcastToChildren = (message) => {
+      try {
+        for (let i = 0; i < window.frames.length; i += 1) {
+          try { window.frames[i].postMessage(message, '*'); } catch (_) {}
+        }
+      } catch (_) {}
+    };
+
+    const applySyncState = (next) => {
+      if (!next || typeof next !== 'object') return;
+      if (typeof next.enabled === 'boolean') state.enabled = next.enabled;
+      if (typeof next.compatibilityMode === 'boolean') state.compatibilityMode = next.compatibilityMode;
+      if (typeof next.overlayEnabled === 'boolean') state.overlayEnabled = next.overlayEnabled;
+      if (next.settings && typeof next.settings === 'object') {
+        const merged = { ...state.settings };
+        ['sharpen','contrast','saturation','brightness','gamma'].forEach((k) => {
+          if (typeof next.settings[k] === 'number') merged[k] = next.settings[k];
+        });
+        state.settings = merged;
+      }
+      VN.overlay?.setSuppressed?.(!state.overlayEnabled);
+      VN.overlay?.updateState?.();
+      VN.scheduleRefresh?.('state-sync');
+    };
+
+    window.addEventListener('message', (event) => {
+      const data = event?.data;
+      if (!data || data.__videoEnhancer !== true) return;
+      if (data.type === 'VIDEO_ENHANCER_REQUEST_STATE') {
+        const msg = { __videoEnhancer: true, type: 'VIDEO_ENHANCER_STATE_SYNC', state: buildLocalSyncState() };
+        try { window.postMessage(msg, '*'); } catch (_) {}
+        broadcastToChildren(msg);
+        return;
+      }
+      if (data.type === 'VIDEO_ENHANCER_STATE_SYNC') {
+        applySyncState(data.state);
+        broadcastToChildren(data);
+      }
+    });
+
+    try {
+      window.top.postMessage({ __videoEnhancer: true, type: 'VIDEO_ENHANCER_REQUEST_STATE' }, '*');
+    } catch (_) {}
+
+    VN.panel = panelApi;
+    return;
+  }
+
+  const buildSyncState = () => ({
+    enabled: state.enabled,
+    compatibilityMode: state.compatibilityMode,
+    overlayEnabled: state.overlayEnabled,
+    settings: { ...state.settings }
+  });
+
+  const broadcastState = () => {
+    const message = { __videoEnhancer: true, type: 'VIDEO_ENHANCER_STATE_SYNC', state: buildSyncState() };
+    try { window.postMessage(message, '*'); } catch (_) {}
+    try {
+      for (let i = 0; i < window.frames.length; i += 1) {
+        try { window.frames[i].postMessage(message, '*'); } catch (_) {}
+      }
+    } catch (_) {}
+  };
+
+  const applyStatePatch = (patch, reason) => {
+    if (!patch || typeof patch !== 'object') return;
+
+    if (typeof patch.enabled === 'boolean') {
+      state.enabled = patch.enabled;
+      VN.schedulePersist(reason || 'state-patch-enabled');
+      VN.scheduleRefresh(reason || 'state-patch-enabled');
+    }
+
+    if (typeof patch.compatibilityMode === 'boolean') {
+      state.compatibilityMode = patch.compatibilityMode;
+      VN.schedulePersist(reason || 'state-patch-compat');
+      if (state.enabled) VN.scheduleRefresh(reason || 'state-patch-compat');
+    }
+
+    if (typeof patch.overlayEnabled === 'boolean') {
+      state.overlayEnabled = patch.overlayEnabled;
+      VN.overlay?.setSuppressed?.(!state.overlayEnabled);
+      VN.schedulePersist(reason || 'state-patch-overlay');
+    }
+
+    if (patch.settings && typeof patch.settings === 'object') {
+      const merged = { ...state.settings };
+      ['sharpen','contrast','saturation','brightness','gamma'].forEach((k) => {
+        if (typeof patch.settings[k] === 'number') merged[k] = patch.settings[k];
+      });
+      state.settings = merged;
+      VN.schedulePersist(reason || 'state-patch-settings');
+      if (state.enabled) VN.scheduleRefresh(reason || 'state-patch-settings');
+    }
+
+    syncUI();
+    broadcastState();
+  };
+
+  panelApi.broadcastState = broadcastState;
+
+  window.addEventListener('message', (event) => {
+    const data = event?.data;
+    if (!data || data.__videoEnhancer !== true) return;
+    if (data.type === 'VIDEO_ENHANCER_REQUEST_STATE') {
+      broadcastState();
+      return;
+    }
+    if (data.type === 'VIDEO_ENHANCER_STATE_PATCH') {
+      applyStatePatch(data.patch, 'state-patch');
+    }
+  });
+
   const sliderInputs = {
     sharpen: null,
     contrast: null,
@@ -149,6 +288,7 @@
     syncUI();
     VN.schedulePersist('main-toggle');
     VN.scheduleRefresh('main-toggle');
+    broadcastState();
   };
 
   const handleCompatibilityToggle = (event) => {
@@ -159,6 +299,7 @@
     if (state.enabled) {
       VN.scheduleRefresh('compatibility-toggle');
     }
+    broadcastState();
   };
 
   const handleOverlayToggle = (event) => {
@@ -167,6 +308,7 @@
     VN.overlay?.setSuppressed?.(!state.overlayEnabled);
     syncUI();
     VN.schedulePersist('overlay-toggle');
+    broadcastState();
   };
 
   const handleSliderInput = (key, event) => {
@@ -185,6 +327,7 @@
     if (state.enabled) {
       VN.scheduleRefresh(`slider-${key}`);
     }
+    broadcastState();
   };
 
   const handlePointerMove = (event) => {
@@ -375,7 +518,19 @@
     VN.schedulePersist('panel-visibility');
   };
 
+  panelApi.toggle = () => {
+    panelApi.setVisible(!state.panelVisible);
+  };
+
   panelApi.syncUI = syncUI;
+
+  window.addEventListener('message', (event) => {
+    const data = event?.data;
+    if (!data || data.__videoEnhancer !== true) return;
+    if (data.type === 'VIDEO_ENHANCER_TOGGLE_PANEL') {
+      panelApi.toggle();
+    }
+  });
 
   VN.panel = panelApi;
 })();

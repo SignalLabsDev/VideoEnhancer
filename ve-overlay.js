@@ -14,23 +14,6 @@
   let spaHooksInstalled = false;
   let suppressed = false;
 
-  // Site detection helpers
-  const getHost = () => (location.hostname || '').toLowerCase();
-  const getPath = () => location.pathname || '/';
-
-  const getSiteType = () => {
-    const host = getHost();
-    const path = getPath();
-    if (host.includes('youtube') && path === '/watch') {
-      return new URLSearchParams(location.search || '').has('v') ? 'youtube' : null;
-    }
-    if (host.includes('twitch.tv') && /^\/[^\/?#]+\/?$/.test(path) && path !== '/') return 'twitch';
-    if (host.includes('kick.com') && /^\/[^\/?#]+\/?$/.test(path) && path !== '/') return 'kick';
-    return null;
-  };
-
-  const isAllowedPage = () => getSiteType() !== null;
-
   // Site-specific styling
   const ACTIVE_STYLE = { bg: 'rgba(15, 23, 42, 0.9)', color: '#9146ff' };
 
@@ -50,11 +33,21 @@
     overlayButton.style.pointerEvents = 'none';
   };
 
+  const getMinTargetSize = () => {
+    const c = VN?.consts;
+    return {
+      w: typeof c?.MIN_TARGET_WIDTH === 'number' ? c.MIN_TARGET_WIDTH : 320,
+      h: typeof c?.MIN_TARGET_HEIGHT === 'number' ? c.MIN_TARGET_HEIGHT : 180
+    };
+  };
+
   const getPrimaryVideo = () => {
+    const min = getMinTargetSize();
     let best = null, bestArea = 0;
     document.querySelectorAll('video').forEach((v) => {
       if (v.offsetWidth > 0 && v.offsetHeight > 0) {
         const rect = v.getBoundingClientRect();
+        if (rect.width < min.w || rect.height < min.h) return;
         const area = rect.width * rect.height;
         if (area > bestArea) { best = { video: v, rect }; bestArea = area; }
       }
@@ -71,7 +64,7 @@
   };
 
   const positionOverlay = () => {
-    if (!overlayButton || suppressed || !isAllowedPage()) { lastVideoRect = null; hideOverlay(); return; }
+    if (!overlayButton || suppressed) { lastVideoRect = null; hideOverlay(); return; }
     const best = getPrimaryVideo();
     if (!best) { lastVideoRect = null; hideOverlay(); return; }
     lastVideoRect = best.rect;
@@ -143,8 +136,13 @@
     settingsButton.appendChild(createIconSpan('⚙', { large: true }));
     settingsButton.onclick = (e) => {
       e.stopPropagation();
-      const current = !!window.VideoEnhancer?.state?.panelVisible;
-      VN.panel?.setVisible?.(!current);
+      try {
+        if (window.top !== window) {
+          window.top.postMessage({ __videoEnhancer: true, type: 'VIDEO_ENHANCER_TOGGLE_PANEL' }, '*');
+          return;
+        }
+      } catch (_) {}
+      VN.panel?.toggle?.();
     };
 
     overlayButton.append(toggleButton, settingsButton);
@@ -152,7 +150,7 @@
   };
 
   const ensureOverlay = () => {
-    if (suppressed || !isAllowedPage()) { hideOverlay(); return null; }
+    if (suppressed) { hideOverlay(); return null; }
     if (!overlayButton) createOverlay();
     updateButtonStyles();
     positionOverlay();
@@ -202,7 +200,7 @@
     if (!suppressed) ensureOverlay();
 
     // Watchdog for missed SPA events
-    setInterval(() => { if (!suppressed && isAllowedPage() && getPrimaryVideo()) ensureOverlay(); }, 2000);
+    setInterval(() => { if (!suppressed && getPrimaryVideo()) ensureOverlay(); }, 2000);
   };
 
   overlayApi.ensure = ensureOverlay;

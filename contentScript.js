@@ -101,10 +101,17 @@
         isEnabled: () => state.enabled,
         onToggle: () => {
           const willEnable = !state.enabled;
+          try {
+            if (window.top !== window) {
+              window.top.postMessage({ __videoEnhancer: true, type: 'VIDEO_ENHANCER_STATE_PATCH', patch: { enabled: willEnable } }, '*');
+              return;
+            }
+          } catch (_) {}
           state.enabled = willEnable;
-          VN.panel?.syncUI?.(); // Sync panel if it exists
+          VN.panel?.syncUI?.();
           VN.schedulePersist('inline-toggle');
           VN.scheduleRefresh('inline-toggle');
+          VN.panel?.broadcastState?.();
         }
       });
       VN.overlay.setSuppressed?.(!state.overlayEnabled);

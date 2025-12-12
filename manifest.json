@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Video Enhancer",
-  "description": "Lightweight, open-source video enhancer for YouTube, Twitch, and Kick.",
-  "version": "1.5.2",
+  "description": "Lightweight, open-source video enhancer for any website with video playback.",
+  "version": "1.6.0",
   "permissions": [
     "storage"
   ],
@@ -23,20 +23,12 @@
     "service_worker": "background.js"
   },
   "host_permissions": [
-    "https://www.youtube.com/*",
-    "https://m.youtube.com/*",
-    "https://music.youtube.com/*",
-    "https://www.twitch.tv/*",
-    "https://kick.com/*"
+    "<all_urls>"
   ],
   "content_scripts": [
     {
       "matches": [
-        "https://www.youtube.com/*",
-        "https://m.youtube.com/*",
-        "https://music.youtube.com/*",
-        "https://www.twitch.tv/*",
-        "https://kick.com/*"
+        "<all_urls>"
       ],
       "js": [
         "ve-constants.js",
@@ -48,6 +40,7 @@
       "css": [
         "contentStyles.css"
       ],
+      "all_frames": true,
       "run_at": "document_idle"
     }
   ]
