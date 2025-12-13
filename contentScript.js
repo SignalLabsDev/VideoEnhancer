@@ -104,7 +104,6 @@
           try {
             if (window.top !== window) {
               window.top.postMessage({ __videoEnhancer: true, type: 'VIDEO_ENHANCER_STATE_PATCH', patch: { enabled: willEnable } }, '*');
-              return;
             }
           } catch (_) {}
           state.enabled = willEnable;

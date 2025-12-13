@@ -41,16 +41,51 @@
     };
   };
 
+  const collectVideosDeep = () => {
+    const found = [];
+    const stack = [document.documentElement];
+    const seen = new Set();
+
+    while (stack.length) {
+      const node = stack.pop();
+      if (!node || seen.has(node)) continue;
+      seen.add(node);
+
+      if (node instanceof HTMLVideoElement) {
+        found.push(node);
+        continue;
+      }
+
+      if (node instanceof Element) {
+        const sr = node.shadowRoot;
+        if (sr && sr.mode === 'open') {
+          stack.push(sr);
+        }
+      }
+
+      if (node instanceof DocumentFragment || node instanceof Element || node instanceof Document) {
+        const children = node.childNodes;
+        if (children && children.length) {
+          for (let i = children.length - 1; i >= 0; i -= 1) stack.push(children[i]);
+        }
+      }
+    }
+
+    return found;
+  };
+
   const getPrimaryVideo = () => {
     const min = getMinTargetSize();
+    const minArea = min.w * min.h;
     let best = null, bestArea = 0;
-    document.querySelectorAll('video').forEach((v) => {
-      if (v.offsetWidth > 0 && v.offsetHeight > 0) {
-        const rect = v.getBoundingClientRect();
-        if (rect.width < min.w || rect.height < min.h) return;
-        const area = rect.width * rect.height;
-        if (area > bestArea) { best = { video: v, rect }; bestArea = area; }
-      }
+    collectVideosDeep().forEach((v) => {
+      const rect = v.getBoundingClientRect();
+      if (!rect || rect.width <= 0 || rect.height <= 0) return;
+      if ((rect.width * rect.height) < minArea) return;
+      const cs = window.getComputedStyle(v);
+      if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) === 0) return;
+      const area = rect.width * rect.height;
+      if (area > bestArea) { best = { video: v, rect }; bestArea = area; }
     });
     return best;
   };
