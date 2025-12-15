@@ -2,9 +2,10 @@
   "manifest_version": 3,
   "name": "Video Enhancer",
   "description": "Lightweight, open-source video enhancer for any website with video playback.",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "permissions": [
-    "storage"
+    "storage",
+    "scripting"
   ],
   "icons": {
     "16": "icons/icon16.png",

@@ -1,152 +1,17 @@
 (() => {
   const VN = window.VideoEnhancer || (window.VideoEnhancer = {});
-  const { state } = VN;
+  
+  // Helper to always get current state
+  const getState = () => VN.state;
   
   const panelApi = {};
+
+  // DOM references
   let panelNode = null;
   let mainToggleButton = null;
   let compatibilityToggleInput = null;
   let overlayToggleInput = null;
-
-  const isTopFrame = (() => {
-    try {
-      return window.top === window;
-    } catch (_) {
-      return true;
-    }
-  })();
-
-  if (!isTopFrame) {
-    panelApi.ensure = () => {};
-    panelApi.syncUI = () => {};
-    panelApi.setVisible = () => {
-      try {
-        window.top.postMessage({ __videoEnhancer: true, type: 'VIDEO_ENHANCER_TOGGLE_PANEL' }, '*');
-      } catch (_) {}
-    };
-    panelApi.toggle = () => panelApi.setVisible();
-
-    const buildLocalSyncState = () => ({
-      enabled: state.enabled,
-      compatibilityMode: state.compatibilityMode,
-      overlayEnabled: state.overlayEnabled,
-      settings: { ...state.settings }
-    });
-
-    const broadcastToChildren = (message) => {
-      try {
-        for (let i = 0; i < window.frames.length; i += 1) {
-          try { window.frames[i].postMessage(message, '*'); } catch (_) {}
-        }
-      } catch (_) {}
-    };
-
-    const applySyncState = (next) => {
-      if (!next || typeof next !== 'object') return;
-      if (typeof next.enabled === 'boolean') state.enabled = next.enabled;
-      if (typeof next.compatibilityMode === 'boolean') state.compatibilityMode = next.compatibilityMode;
-      if (typeof next.overlayEnabled === 'boolean') state.overlayEnabled = next.overlayEnabled;
-      if (next.settings && typeof next.settings === 'object') {
-        const merged = { ...state.settings };
-        ['sharpen','contrast','saturation','brightness','gamma'].forEach((k) => {
-          if (typeof next.settings[k] === 'number') merged[k] = next.settings[k];
-        });
-        state.settings = merged;
-      }
-      VN.overlay?.setSuppressed?.(!state.overlayEnabled);
-      VN.overlay?.updateState?.();
-      VN.scheduleRefresh?.('state-sync');
-    };
-
-    window.addEventListener('message', (event) => {
-      const data = event?.data;
-      if (!data || data.__videoEnhancer !== true) return;
-      if (data.type === 'VIDEO_ENHANCER_REQUEST_STATE') {
-        const msg = { __videoEnhancer: true, type: 'VIDEO_ENHANCER_STATE_SYNC', state: buildLocalSyncState() };
-        try { window.postMessage(msg, '*'); } catch (_) {}
-        broadcastToChildren(msg);
-        return;
-      }
-      if (data.type === 'VIDEO_ENHANCER_STATE_SYNC') {
-        applySyncState(data.state);
-        broadcastToChildren(data);
-      }
-    });
-
-    try {
-      window.top.postMessage({ __videoEnhancer: true, type: 'VIDEO_ENHANCER_REQUEST_STATE' }, '*');
-    } catch (_) {}
-
-    VN.panel = panelApi;
-    return;
-  }
-
-  const buildSyncState = () => ({
-    enabled: state.enabled,
-    compatibilityMode: state.compatibilityMode,
-    overlayEnabled: state.overlayEnabled,
-    settings: { ...state.settings }
-  });
-
-  const broadcastState = () => {
-    const message = { __videoEnhancer: true, type: 'VIDEO_ENHANCER_STATE_SYNC', state: buildSyncState() };
-    try { window.postMessage(message, '*'); } catch (_) {}
-    try {
-      for (let i = 0; i < window.frames.length; i += 1) {
-        try { window.frames[i].postMessage(message, '*'); } catch (_) {}
-      }
-    } catch (_) {}
-  };
-
-  const applyStatePatch = (patch, reason) => {
-    if (!patch || typeof patch !== 'object') return;
-
-    if (typeof patch.enabled === 'boolean') {
-      state.enabled = patch.enabled;
-      VN.schedulePersist(reason || 'state-patch-enabled');
-      VN.scheduleRefresh(reason || 'state-patch-enabled');
-    }
-
-    if (typeof patch.compatibilityMode === 'boolean') {
-      state.compatibilityMode = patch.compatibilityMode;
-      VN.schedulePersist(reason || 'state-patch-compat');
-      if (state.enabled) VN.scheduleRefresh(reason || 'state-patch-compat');
-    }
-
-    if (typeof patch.overlayEnabled === 'boolean') {
-      state.overlayEnabled = patch.overlayEnabled;
-      VN.overlay?.setSuppressed?.(!state.overlayEnabled);
-      VN.schedulePersist(reason || 'state-patch-overlay');
-    }
-
-    if (patch.settings && typeof patch.settings === 'object') {
-      const merged = { ...state.settings };
-      ['sharpen','contrast','saturation','brightness','gamma'].forEach((k) => {
-        if (typeof patch.settings[k] === 'number') merged[k] = patch.settings[k];
-      });
-      state.settings = merged;
-      VN.schedulePersist(reason || 'state-patch-settings');
-      if (state.enabled) VN.scheduleRefresh(reason || 'state-patch-settings');
-    }
-
-    syncUI();
-    broadcastState();
-  };
-
-  panelApi.broadcastState = broadcastState;
-
-  window.addEventListener('message', (event) => {
-    const data = event?.data;
-    if (!data || data.__videoEnhancer !== true) return;
-    if (data.type === 'VIDEO_ENHANCER_REQUEST_STATE') {
-      broadcastState();
-      return;
-    }
-    if (data.type === 'VIDEO_ENHANCER_STATE_PATCH') {
-      applyStatePatch(data.patch, 'state-patch');
-    }
-  });
-
+  
   const sliderInputs = {
     sharpen: null,
     contrast: null,
@@ -163,6 +28,7 @@
     gamma: null
   };
 
+  // Drag state
   const dragState = {
     isDragging: false,
     pointerId: null,
@@ -172,11 +38,111 @@
     startLeft: 0
   };
 
+  // State flags
+  let spaHooksInstalled = false;
+  let panelWatchdog = null;
+  let wired = false;
+
+  // Check if we're in the top frame
+  const isTopFrame = (() => {
+    try {
+      return window.top === window;
+    } catch (_) {
+      return true;
+    }
+  })();
+
+  // =========================================================================
+  // IFRAME HANDLING - If not top frame, just proxy messages to parent
+  // =========================================================================
+  if (!isTopFrame) {
+    panelApi.ensure = () => {};
+    panelApi.syncUI = () => {};
+    panelApi.toggle = () => {
+      try {
+        window.top.postMessage({ __videoEnhancer: true, type: 'VIDEO_ENHANCER_TOGGLE_PANEL' }, '*');
+      } catch (_) {}
+    };
+    panelApi.setVisible = panelApi.toggle;
+    panelApi.broadcastState = () => {};
+
+    // Listen for state sync from parent
+    window.addEventListener('message', (event) => {
+      const data = event?.data;
+      if (!data || data.__videoEnhancer !== true) return;
+
+      if (data.type === 'VIDEO_ENHANCER_STATE_SYNC' && data.state) {
+        const state = getState();
+        if (!state) return;
+        
+        const s = data.state;
+        if (typeof s.enabled === 'boolean') state.enabled = s.enabled;
+        if (typeof s.compatibilityMode === 'boolean') state.compatibilityMode = s.compatibilityMode;
+        if (typeof s.overlayEnabled === 'boolean') state.overlayEnabled = s.overlayEnabled;
+        if (s.settings && typeof s.settings === 'object') {
+          ['sharpen','contrast','saturation','brightness','gamma'].forEach((k) => {
+            if (typeof s.settings[k] === 'number') state.settings[k] = s.settings[k];
+          });
+        }
+        VN.overlay?.refresh?.();
+        VN.overlay?.updateState?.();
+        VN.scheduleRefresh?.('state-sync');
+      }
+    });
+
+    VN.panel = panelApi;
+    return;
+  }
+
+  // =========================================================================
+  // TOP FRAME ONLY - Full panel implementation
+  // =========================================================================
+
+  // Utility functions
   const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
   const formatPercent = (value) => `${Math.round(value * 100)}%`;
 
+  // Build state snapshot for broadcasting to iframes
+  const buildSyncState = () => {
+    const state = getState();
+    if (!state) return {};
+    return {
+      enabled: state.enabled,
+      compatibilityMode: state.compatibilityMode,
+      overlayEnabled: state.overlayEnabled,
+      settings: { ...state.settings }
+    };
+  };
+
+  // Broadcast state to all child iframes
+  const broadcastState = () => {
+    const message = { __videoEnhancer: true, type: 'VIDEO_ENHANCER_STATE_SYNC', state: buildSyncState() };
+    try {
+      for (let i = 0; i < window.frames.length; i += 1) {
+        try { window.frames[i].postMessage(message, '*'); } catch (_) {}
+      }
+    } catch (_) {}
+  };
+
+  // Reset all DOM references
+  const resetDomRefs = () => {
+    panelNode = null;
+    mainToggleButton = null;
+    compatibilityToggleInput = null;
+    overlayToggleInput = null;
+    wired = false;
+    Object.keys(sliderInputs).forEach((k) => { sliderInputs[k] = null; });
+    Object.keys(sliderValueLabels).forEach((k) => { sliderValueLabels[k] = null; });
+  };
+
+  // =========================================================================
+  // UI UPDATE FUNCTIONS
+  // =========================================================================
+
   const applyPanelPosition = () => {
     if (!panelNode) return;
+    const state = getState();
+    if (!state) return;
 
     if (state.panelPosition.useCustom && state.panelPosition.left !== null) {
       panelNode.style.top = `${state.panelPosition.top}px`;
@@ -190,8 +156,14 @@
   };
 
   const updatePanelVisibility = () => {
-    if (panelNode) {
-      panelNode.classList.toggle('video-enhancer-hidden', !state.panelVisible);
+    if (!panelNode) return;
+    const state = getState();
+    if (!state) return;
+    
+    if (state.panelVisible) {
+      panelNode.classList.remove('video-enhancer-hidden');
+    } else {
+      panelNode.classList.add('video-enhancer-hidden');
     }
   };
 
@@ -204,6 +176,8 @@
 
   const updateTabStyles = () => {
     if (!panelNode) return;
+    const state = getState();
+    if (!state) return;
 
     const tabButtons = panelNode.querySelectorAll('[data-video-enhancer-tab]');
     tabButtons.forEach((button) => {
@@ -224,6 +198,9 @@
   };
 
   const updateCompatibilityState = () => {
+    const state = getState();
+    if (!state) return;
+    
     const sharpenInput = sliderInputs.sharpen;
     const sharpenLabel = sliderValueLabels.sharpen;
     const sharpenGroup = sharpenInput?.closest('.video-enhancer-slider-group');
@@ -238,6 +215,9 @@
   };
 
   const syncSliders = () => {
+    const state = getState();
+    if (!state) return;
+    
     Object.entries(sliderInputs).forEach(([key, input]) => {
       if (!input) return;
       const value = state.settings[key];
@@ -256,65 +236,101 @@
     });
   };
 
+  // Main UI sync function - updates all UI elements to match state
   const syncUI = () => {
     if (!panelNode) return;
+    const state = getState();
+    if (!state) return;
+    
     applyPanelPosition();
     updatePanelVisibility();
     setButtonState(mainToggleButton, state.enabled, 'ON', 'OFF');
+    
     if (compatibilityToggleInput) {
       compatibilityToggleInput.checked = state.compatibilityMode;
     }
     if (overlayToggleInput) {
       overlayToggleInput.checked = state.overlayEnabled;
     }
+    
     syncSliders();
     updateCompatibilityState();
     updateTabStyles();
+    
+    // Update overlay button state
     VN.overlay?.updateState?.();
   };
 
+  // =========================================================================
+  // EVENT HANDLERS
+  // =========================================================================
+
   const setActiveTab = (tabName) => {
+    const state = getState();
+    if (!state) return;
+    
     const normalized = tabName === 'custom' ? 'custom' : 'preset';
     if (state.activeTab !== normalized) {
       state.activeTab = normalized;
-      VN.schedulePersist('tab-change');
+      VN.schedulePersist?.('tab-change');
     }
     updateTabStyles();
   };
 
   const handleMainToggle = () => {
-    const willEnable = !state.enabled;
-    state.enabled = willEnable;
+    const state = getState();
+    if (!state) return;
+    
+    const newEnabled = !state.enabled;
+    state.enabled = newEnabled;
+    
     syncUI();
-    VN.schedulePersist('main-toggle');
-    VN.scheduleRefresh('main-toggle');
+    VN.schedulePersist?.('main-toggle');
+    
+    if (newEnabled) {
+      VN.scheduleRefresh?.('main-toggle');
+    } else {
+      VN.updateAllVideos?.(null);
+    }
+    
     broadcastState();
   };
 
   const handleCompatibilityToggle = (event) => {
-    const willEnable = event?.target?.checked ?? !state.compatibilityMode;
-    state.compatibilityMode = willEnable;
+    const state = getState();
+    if (!state) return;
+    
+    state.compatibilityMode = event?.target?.checked ?? !state.compatibilityMode;
     syncUI();
-    VN.schedulePersist('compatibility-toggle');
+    VN.schedulePersist?.('compatibility-toggle');
     if (state.enabled) {
-      VN.scheduleRefresh('compatibility-toggle');
+      VN.scheduleRefresh?.('compatibility-toggle');
     }
     broadcastState();
   };
 
   const handleOverlayToggle = (event) => {
-    const willEnable = event?.target?.checked ?? !state.overlayEnabled;
-    state.overlayEnabled = willEnable;
-    VN.overlay?.setSuppressed?.(!state.overlayEnabled);
+    const state = getState();
+    if (!state) return;
+    
+    state.overlayEnabled = event?.target?.checked ?? !state.overlayEnabled;
+    
+    // Refresh overlay visibility
+    VN.overlay?.refresh?.();
+    
     syncUI();
-    VN.schedulePersist('overlay-toggle');
+    VN.schedulePersist?.('overlay-toggle');
     broadcastState();
   };
 
   const handleSliderInput = (key, event) => {
+    const state = getState();
+    if (!state) return;
+    
     const rawValue = Number(event.target.value);
     const normalized = rawValue / 100;
     state.settings[key] = Number(normalized.toFixed(3));
+    
     const label = sliderValueLabels[key];
     if (label) {
       if (key === 'gamma') {
@@ -323,15 +339,18 @@
         label.textContent = formatPercent(state.settings[key]);
       }
     }
-    VN.schedulePersist(`slider-${key}`);
+    
+    VN.schedulePersist?.(`slider-${key}`);
     if (state.enabled) {
-      VN.scheduleRefresh(`slider-${key}`);
+      VN.scheduleRefresh?.(`slider-${key}`);
     }
     broadcastState();
   };
 
   const handlePointerMove = (event) => {
     if (!dragState.isDragging || dragState.pointerId !== event.pointerId) return;
+    const state = getState();
+    if (!state) return;
 
     const deltaX = event.clientX - dragState.startX;
     const deltaY = event.clientY - dragState.startY;
@@ -361,29 +380,101 @@
 
     dragState.isDragging = false;
     dragState.pointerId = null;
-    if (panelNode.hasPointerCapture(event.pointerId)) {
+    if (panelNode && panelNode.hasPointerCapture(event.pointerId)) {
       panelNode.releasePointerCapture(event.pointerId);
     }
-    panelNode.classList.remove('video-enhancer-dragging');
-    VN.schedulePersist('panel-position');
+    panelNode?.classList.remove('video-enhancer-dragging');
+    VN.schedulePersist?.('panel-position');
   };
 
-  panelApi.ensure = () => {
-    if (panelNode) return;
+  // =========================================================================
+  // PANEL CREATION AND WIRING
+  // =========================================================================
 
-    panelNode = document.getElementById('video-enhancer-panel');
-    if (panelNode) return;
+  const wirePanelNode = () => {
+    if (!panelNode || !panelNode.isConnected || wired) return;
+    wired = true;
 
+    mainToggleButton = panelNode.querySelector('#video-enhancer-main-toggle');
+    compatibilityToggleInput = panelNode.querySelector('#video-enhancer-compatibility-toggle');
+    overlayToggleInput = panelNode.querySelector('#video-enhancer-overlay-toggle');
+
+    sliderInputs.sharpen = panelNode.querySelector('#video-enhancer-custom-sharpen');
+    sliderInputs.contrast = panelNode.querySelector('#video-enhancer-custom-contrast');
+    sliderInputs.saturation = panelNode.querySelector('#video-enhancer-custom-saturation');
+    sliderInputs.brightness = panelNode.querySelector('#video-enhancer-custom-brightness');
+    sliderInputs.gamma = panelNode.querySelector('#video-enhancer-custom-gamma');
+
+    sliderValueLabels.sharpen = panelNode.querySelector('#video-enhancer-custom-sharpen-value');
+    sliderValueLabels.contrast = panelNode.querySelector('#video-enhancer-custom-contrast-value');
+    sliderValueLabels.saturation = panelNode.querySelector('#video-enhancer-custom-saturation-value');
+    sliderValueLabels.brightness = panelNode.querySelector('#video-enhancer-custom-brightness-value');
+    sliderValueLabels.gamma = panelNode.querySelector('#video-enhancer-custom-gamma-value');
+
+    // Tab buttons
+    const tabButtons = panelNode.querySelectorAll('[data-video-enhancer-tab]');
+    tabButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        setActiveTab(button.getAttribute('data-video-enhancer-tab'));
+      });
+    });
+
+    // Hide button
+    panelNode.querySelector('#video-enhancer-hide')?.addEventListener('click', () => {
+      panelApi.setVisible(false);
+    });
+
+    // Drag handling
+    const header = panelNode.querySelector('.video-enhancer-header');
+    panelNode.addEventListener('pointermove', handlePointerMove);
+    panelNode.addEventListener('pointerup', endDrag);
+    panelNode.addEventListener('pointercancel', endDrag);
+
+    header?.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      if ((event.target instanceof HTMLElement) && event.target.closest('.video-enhancer-icon-button')) return;
+
+      panelNode.setPointerCapture(event.pointerId);
+
+      const rect = panelNode.getBoundingClientRect();
+      dragState.isDragging = true;
+      dragState.pointerId = event.pointerId;
+      dragState.startX = event.clientX;
+      dragState.startY = event.clientY;
+      dragState.startTop = rect.top;
+      dragState.startLeft = rect.left;
+
+      panelNode.classList.add('video-enhancer-dragging');
+      event.preventDefault();
+    });
+
+    // Main toggle
+    mainToggleButton?.addEventListener('click', handleMainToggle);
+
+    // Checkboxes
+    compatibilityToggleInput?.addEventListener('change', handleCompatibilityToggle);
+    overlayToggleInput?.addEventListener('change', handleOverlayToggle);
+
+    // Sliders
+    sliderInputs.sharpen?.addEventListener('input', (e) => handleSliderInput('sharpen', e));
+    sliderInputs.contrast?.addEventListener('input', (e) => handleSliderInput('contrast', e));
+    sliderInputs.saturation?.addEventListener('input', (e) => handleSliderInput('saturation', e));
+    sliderInputs.brightness?.addEventListener('input', (e) => handleSliderInput('brightness', e));
+    sliderInputs.gamma?.addEventListener('input', (e) => handleSliderInput('gamma', e));
+  };
+
+  const createPanelNode = () => {
     panelNode = document.createElement('div');
     panelNode.id = 'video-enhancer-panel';
     panelNode.setAttribute('role', 'region');
     panelNode.setAttribute('aria-label', 'Video Enhancer Controls');
 
+    // Start hidden
+    panelNode.classList.add('video-enhancer-hidden');
+
     panelNode.innerHTML = `
       <div class="video-enhancer-header">
-        <h1>
-          Video Enhancer
-        </h1>
+        <h1>Video Enhancer</h1>
         <button id="video-enhancer-hide" type="button" class="video-enhancer-icon-button" aria-label="Hide Video Enhancer">&times;</button>
       </div>
       <div class="video-enhancer-tabs" role="tablist" aria-label="Video Enhancer modes">
@@ -444,89 +535,124 @@
     `;
 
     document.documentElement.appendChild(panelNode);
+  };
 
-    mainToggleButton = panelNode.querySelector('#video-enhancer-main-toggle');
-    compatibilityToggleInput = panelNode.querySelector('#video-enhancer-compatibility-toggle');
-    overlayToggleInput = panelNode.querySelector('#video-enhancer-overlay-toggle');
+  // =========================================================================
+  // PUBLIC API
+  // =========================================================================
 
-    sliderInputs.sharpen = panelNode.querySelector('#video-enhancer-custom-sharpen');
-    sliderInputs.contrast = panelNode.querySelector('#video-enhancer-custom-contrast');
-    sliderInputs.saturation = panelNode.querySelector('#video-enhancer-custom-saturation');
-    sliderInputs.brightness = panelNode.querySelector('#video-enhancer-custom-brightness');
-    sliderInputs.gamma = panelNode.querySelector('#video-enhancer-custom-gamma');
+  // Ensure panel DOM exists (create if needed, wire if not wired)
+  panelApi.ensure = () => {
+    // If panel exists but is disconnected, reset refs
+    if (panelNode && !panelNode.isConnected) {
+      resetDomRefs();
+    }
 
-    sliderValueLabels.sharpen = panelNode.querySelector('#video-enhancer-custom-sharpen-value');
-    sliderValueLabels.contrast = panelNode.querySelector('#video-enhancer-custom-contrast-value');
-    sliderValueLabels.saturation = panelNode.querySelector('#video-enhancer-custom-saturation-value');
-    sliderValueLabels.brightness = panelNode.querySelector('#video-enhancer-custom-brightness-value');
-    sliderValueLabels.gamma = panelNode.querySelector('#video-enhancer-custom-gamma-value');
+    // If panel already exists and is connected, just ensure it's wired
+    if (panelNode && panelNode.isConnected) {
+      wirePanelNode();
+      return;
+    }
 
-    const tabButtons = panelNode.querySelectorAll('[data-video-enhancer-tab]');
-    tabButtons.forEach((button) => {
-      button.addEventListener('click', () => {
-        setActiveTab(button.getAttribute('data-video-enhancer-tab'));
-      });
-    });
+    // Check if panel already exists in DOM (e.g., from previous injection)
+    panelNode = document.getElementById('video-enhancer-panel');
+    if (panelNode) {
+      wirePanelNode();
+      return;
+    }
 
-    panelNode.querySelector('#video-enhancer-hide')?.addEventListener('click', () => {
-      panelApi.setVisible(false);
-    });
+    // Create new panel
+    createPanelNode();
+    wirePanelNode();
+  };
 
-    const header = panelNode.querySelector('.video-enhancer-header');
-    panelNode.addEventListener('pointermove', handlePointerMove);
-    panelNode.addEventListener('pointerup', endDrag);
-    panelNode.addEventListener('pointercancel', endDrag);
+  // Set panel visibility
+  panelApi.setVisible = (visible) => {
+    const state = getState();
+    if (!state) return;
+    
+    const newVisible = Boolean(visible);
+    
+    // If showing, ensure panel exists first
+    if (newVisible) {
+      panelApi.ensure();
+    }
 
-    header?.addEventListener('pointerdown', (event) => {
-      if (event.button !== 0) return;
-      if ((event.target instanceof HTMLElement) && event.target.closest('.video-enhancer-icon-button')) return;
+    // Update state and UI
+    state.panelVisible = newVisible;
+    updatePanelVisibility();
+    
+    if (newVisible && panelNode) {
+      syncUI();
+    }
 
-      panelNode.setPointerCapture(event.pointerId);
+    VN.schedulePersist?.('panel-visibility');
+  };
 
-      const rect = panelNode.getBoundingClientRect();
-      dragState.isDragging = true;
-      dragState.pointerId = event.pointerId;
-      dragState.startX = event.clientX;
-      dragState.startY = event.clientY;
-      dragState.startTop = rect.top;
-      dragState.startLeft = rect.left;
+  // Toggle panel visibility
+  panelApi.toggle = () => {
+    const state = getState();
+    panelApi.setVisible(!state?.panelVisible);
+  };
 
-      panelNode.classList.add('video-enhancer-dragging');
-      event.preventDefault();
-    });
+  // Sync UI to current state
+  panelApi.syncUI = syncUI;
 
-    mainToggleButton?.addEventListener('click', handleMainToggle);
-    compatibilityToggleInput?.addEventListener('change', handleCompatibilityToggle);
-    overlayToggleInput?.addEventListener('change', handleOverlayToggle);
+  // Broadcast state to child frames
+  panelApi.broadcastState = broadcastState;
 
-    sliderInputs.sharpen?.addEventListener('input', (event) => handleSliderInput('sharpen', event));
-    sliderInputs.contrast?.addEventListener('input', (event) => handleSliderInput('contrast', event));
-    sliderInputs.saturation?.addEventListener('input', (event) => handleSliderInput('saturation', event));
-    sliderInputs.brightness?.addEventListener('input', (event) => handleSliderInput('brightness', event));
-    sliderInputs.gamma?.addEventListener('input', (event) => handleSliderInput('gamma', event));
+  // =========================================================================
+  // INITIALIZATION
+  // =========================================================================
 
+  // SPA navigation hooks
+  const onUrlChange = () => {
+    const state = getState();
+    if (!state?.panelVisible || !panelNode) return;
     syncUI();
   };
 
-  panelApi.setVisible = (visible) => {
-    state.panelVisible = visible;
-    if (visible) {
-      panelApi.ensure();
-      syncUI();
+  const installSpaHooks = () => {
+    if (spaHooksInstalled) return;
+    spaHooksInstalled = true;
+
+    const wrap = (fn) => function() {
+      const result = fn.apply(this, arguments);
+      onUrlChange();
+      return result;
+    };
+
+    if (typeof history.pushState === 'function') {
+      history.pushState = wrap(history.pushState);
     }
-    updatePanelVisibility();
-    VN.schedulePersist('panel-visibility');
+    if (typeof history.replaceState === 'function') {
+      history.replaceState = wrap(history.replaceState);
+    }
+
+    const events = ['popstate', 'yt-navigate-finish', 'yt-page-data-updated', 'yt-navigate-start'];
+    events.forEach((evt) => window.addEventListener(evt, onUrlChange));
   };
 
-  panelApi.toggle = () => {
-    panelApi.setVisible(!state.panelVisible);
-  };
+  installSpaHooks();
 
-  panelApi.syncUI = syncUI;
+  // Watchdog to recover panel if DOM is removed (e.g., by page scripts)
+  if (!panelWatchdog) {
+    panelWatchdog = setInterval(() => {
+      const state = getState();
+      if (!state?.panelVisible) return;
+      if (!panelNode || !panelNode.isConnected) {
+        resetDomRefs();
+        panelApi.ensure();
+        syncUI();
+      }
+    }, 2000);
+  }
 
+  // Listen for toggle messages from iframes or background
   window.addEventListener('message', (event) => {
     const data = event?.data;
     if (!data || data.__videoEnhancer !== true) return;
+
     if (data.type === 'VIDEO_ENHANCER_TOGGLE_PANEL') {
       panelApi.toggle();
     }

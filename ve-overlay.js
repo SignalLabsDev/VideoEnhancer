@@ -1,38 +1,58 @@
 (() => {
   const VN = window.VideoEnhancer || (window.VideoEnhancer = {});
+  
+  // Helper to always get current state
+  const getState = () => VN.state;
+  
   const overlayApi = {};
 
-  let config = { isEnabled: () => false, onToggle: () => {} };
-  let overlayButton = null;
+  // DOM references
+  let overlayContainer = null;
   let toggleButton = null;
   let settingsButton = null;
+
+  // State
   let lastVideoRect = null;
   let lastMouseX = 0;
   let lastMouseY = 0;
   let repositionRAF = null;
   let hoverRAF = null;
   let spaHooksInstalled = false;
-  let suppressed = false;
+  let initialized = false;
 
-  // Site-specific styling
+  // Styles
   const ACTIVE_STYLE = { bg: 'rgba(15, 23, 42, 0.9)', color: '#9146ff' };
-
   const DISABLED_STYLE = { bg: 'rgba(15, 23, 42, 0.9)', color: 'rgba(145, 70, 255, 0.4)' };
 
+  // Helper: Check if overlay should be shown
+  const shouldShowOverlay = () => {
+    return Boolean(getState()?.overlayEnabled);
+  };
+
+  // Helper: Apply button styling
   const applyButtonStyle = (btn, style) => {
+    if (!btn) return;
     btn.style.setProperty('background-image', 'none', 'important');
     btn.style.setProperty('background-color', style.bg, 'important');
     btn.style.setProperty('color', style.color, 'important');
     btn.style.setProperty('border-color', 'transparent', 'important');
   };
 
+  // Hide the overlay completely
   const hideOverlay = () => {
-    if (!overlayButton) return;
-    overlayButton.style.visibility = 'hidden';
-    overlayButton.style.opacity = '0';
-    overlayButton.style.pointerEvents = 'none';
+    if (!overlayContainer) return;
+    overlayContainer.style.visibility = 'hidden';
+    overlayContainer.style.opacity = '0';
+    overlayContainer.style.pointerEvents = 'none';
   };
 
+  // Show the overlay (just visibility, opacity controlled by hover)
+  const showOverlay = () => {
+    if (!overlayContainer) return;
+    overlayContainer.style.visibility = 'visible';
+  };
+
+  // Get minimum video size thresholds
   const getMinTargetSize = () => {
     const c = VN?.consts;
     return {
@@ -41,6 +61,7 @@
     };
   };
 
+  // Collect all videos including those in shadow DOM
   const collectVideosDeep = () => {
     const found = [];
     const stack = [document.documentElement];
@@ -66,7 +87,9 @@
       if (node instanceof DocumentFragment || node instanceof Element || node instanceof Document) {
         const children = node.childNodes;
         if (children && children.length) {
-          for (let i = children.length - 1; i >= 0; i -= 1) stack.push(children[i]);
+          for (let i = children.length - 1; i >= 0; i -= 1) {
+            stack.push(children[i]);
+          }
         }
       }
     }
@@ -74,75 +97,135 @@
     return found;
   };
 
+  // Check if rect is visible in viewport
+  const rectIntersectsViewport = (rect) => {
+    if (!rect) return false;
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    if (rect.right <= 0 || rect.bottom <= 0) return false;
+    if (rect.left >= window.innerWidth || rect.top >= window.innerHeight) return false;
+    return true;
+  };
+
+  // Get the largest visible video element
   const getPrimaryVideo = () => {
     const min = getMinTargetSize();
     const minArea = min.w * min.h;
-    let best = null, bestArea = 0;
+    let best = null;
+    let bestArea = 0;
+
     collectVideosDeep().forEach((v) => {
       const rect = v.getBoundingClientRect();
-      if (!rect || rect.width <= 0 || rect.height <= 0) return;
+      if (!rectIntersectsViewport(rect)) return;
       if ((rect.width * rect.height) < minArea) return;
+      
       const cs = window.getComputedStyle(v);
       if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) === 0) return;
+      
       const area = rect.width * rect.height;
-      if (area > bestArea) { best = { video: v, rect }; bestArea = area; }
+      if (area > bestArea) {
+        best = { video: v, rect };
+        bestArea = area;
+      }
     });
+
     return best;
   };
 
+  // Update hover state (show/hide based on mouse position over video)
   const updateHoverState = () => {
-    if (!overlayButton || suppressed || !lastVideoRect) { hideOverlay(); return; }
+    if (!overlayContainer || !shouldShowOverlay() || !lastVideoRect) {
+      hideOverlay();
+      return;
+    }
+
     const r = lastVideoRect;
-    const inside = lastMouseX >= r.left && lastMouseX <= r.right && lastMouseY >= r.top && lastMouseY <= r.bottom;
-    overlayButton.style.opacity = inside ? '1' : '0';
-    overlayButton.style.pointerEvents = inside ? 'auto' : 'none';
+    const inside = lastMouseX >= r.left && lastMouseX <= r.right && 
+                   lastMouseY >= r.top && lastMouseY <= r.bottom;
+
+    overlayContainer.style.opacity = inside ? '1' : '0';
+    overlayContainer.style.pointerEvents = inside ? 'auto' : 'none';
   };
 
+  // Position the overlay relative to the primary video
   const positionOverlay = () => {
-    if (!overlayButton || suppressed) { lastVideoRect = null; hideOverlay(); return; }
+    // If disabled or no container, hide and bail
+    if (!overlayContainer || !shouldShowOverlay()) {
+      lastVideoRect = null;
+      hideOverlay();
+      return;
+    }
+
     const best = getPrimaryVideo();
-    if (!best) { lastVideoRect = null; hideOverlay(); return; }
+    if (!best) {
+      lastVideoRect = null;
+      hideOverlay();
+      return;
+    }
+
     lastVideoRect = best.rect;
     const margin = 8;
-    overlayButton.style.top = `${Math.max(margin, best.rect.top + margin)}px`;
-    overlayButton.style.right = `${Math.max(margin, window.innerWidth - best.rect.right + margin)}px`;
-    overlayButton.style.visibility = 'visible';
+    overlayContainer.style.top = `${Math.max(margin, best.rect.top + margin)}px`;
+    overlayContainer.style.right = `${Math.max(margin, window.innerWidth - best.rect.right + margin)}px`;
+    showOverlay();
     updateHoverState();
   };
 
+  // Request position update on next animation frame
   const requestPosition = () => {
     if (repositionRAF) return;
-    repositionRAF = requestAnimationFrame(() => { repositionRAF = null; positionOverlay(); });
+    repositionRAF = requestAnimationFrame(() => {
+      repositionRAF = null;
+      positionOverlay();
+    });
   };
 
+  // Update button visual states based on enabled state
   const updateButtonStyles = () => {
-    if (!toggleButton || !settingsButton || suppressed) return;
+    if (!toggleButton || !settingsButton) return;
 
-    // Settings button always uses active style
+    // Settings button always active
     applyButtonStyle(settingsButton, ACTIVE_STYLE);
 
-    // Toggle button reflects enabled state
-    applyButtonStyle(toggleButton, config.isEnabled() ? ACTIVE_STYLE : DISABLED_STYLE);
+    // Toggle button reflects filter enabled state
+    const isEnabled = Boolean(getState()?.enabled);
+    applyButtonStyle(toggleButton, isEnabled ? ACTIVE_STYLE : DISABLED_STYLE);
   };
 
+  // Create the overlay DOM elements
   const createOverlay = () => {
-    overlayButton = document.createElement('div');
-    overlayButton.id = 'video-enhancer-inline-toggle';
-    overlayButton.style.cssText = `
-      position: fixed !important; z-index: 2147483646 !important;
-      top: -9999px; right: -9999px; height: 38px;
-      display: inline-flex; align-items: center; gap: 6px;
-      visibility: hidden; opacity: 0; pointer-events: none;
+    if (overlayContainer) return;
+
+    overlayContainer = document.createElement('div');
+    overlayContainer.id = 'video-enhancer-inline-toggle';
+    overlayContainer.style.cssText = `
+      position: fixed !important;
+      z-index: 2147483646 !important;
+      top: -9999px;
+      right: -9999px;
+      height: 38px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      visibility: hidden;
+      opacity: 0;
+      pointer-events: none;
       transition: opacity 120ms ease;
     `;
 
     const btnStyle = `
-      width: 38px; height: 38px; padding: 0;
+      width: 38px;
+      height: 38px;
+      padding: 0;
       box-sizing: border-box;
-      border: 1px solid transparent; border-radius: 11px;
-      display: inline-flex; align-items: center; justify-content: center;
+      border: 1px solid transparent;
+      border-radius: 11px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      font-size: 20px; font-weight: 700;
+      font-size: 20px;
+      font-weight: 700;
+      cursor: pointer;
     `;
 
     const createIconSpan = (char, options = {}) => {
@@ -159,68 +242,135 @@
       return span;
     };
 
+    // Toggle button - enables/disables the filter
     toggleButton = document.createElement('button');
     toggleButton.type = 'button';
     toggleButton.style.cssText = btnStyle;
     toggleButton.appendChild(createIconSpan('⏻', { bold: true }));
-    toggleButton.onclick = (e) => { e.stopPropagation(); config.onToggle(); updateButtonStyles(); };
+    toggleButton.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      
+      const state = getState();
+      if (!state) return;
+      
+      // Toggle the enabled state
+      const newEnabled = !state.enabled;
+      state.enabled = newEnabled;
+      
+      // Update visuals immediately
+      updateButtonStyles();
+      
+      // Sync with panel and persist
+      VN.panel?.syncUI?.();
+      VN.schedulePersist?.('overlay-toggle');
+      
+      // Apply or remove filter immediately
+      if (newEnabled) {
+        VN.scheduleRefresh?.('overlay-toggle');
+      } else {
+        VN.updateAllVideos?.(null);
+      }
+      
+      VN.panel?.broadcastState?.();
+    });
 
+    // Settings button - opens the panel
     settingsButton = document.createElement('button');
     settingsButton.type = 'button';
     settingsButton.style.cssText = btnStyle;
     settingsButton.appendChild(createIconSpan('⚙', { large: true }));
-    settingsButton.onclick = (e) => {
+    settingsButton.addEventListener('click', (e) => {
       e.stopPropagation();
+      e.preventDefault();
+      
+      // If in iframe, message parent; otherwise toggle directly
       try {
         if (window.top !== window) {
           window.top.postMessage({ __videoEnhancer: true, type: 'VIDEO_ENHANCER_TOGGLE_PANEL' }, '*');
           return;
         }
       } catch (_) {}
+      
       VN.panel?.toggle?.();
-    };
+    });
 
-    overlayButton.append(toggleButton, settingsButton);
-    (document.body || document.documentElement).appendChild(overlayButton);
+    overlayContainer.append(toggleButton, settingsButton);
+    (document.body || document.documentElement).appendChild(overlayContainer);
   };
 
+  // Ensure overlay exists and is properly positioned
   const ensureOverlay = () => {
-    if (suppressed) { hideOverlay(); return null; }
-    if (!overlayButton) createOverlay();
+    if (!shouldShowOverlay()) {
+      hideOverlay();
+      return;
+    }
+
+    if (!overlayContainer) {
+      createOverlay();
+    }
+
     updateButtonStyles();
     positionOverlay();
-    return overlayButton;
   };
 
+  // Mouse move handler
   const onMouseMove = (e) => {
     lastMouseX = e.clientX;
     lastMouseY = e.clientY;
+    
     if (hoverRAF) return;
-    hoverRAF = requestAnimationFrame(() => { hoverRAF = null; updateHoverState(); });
+    hoverRAF = requestAnimationFrame(() => {
+      hoverRAF = null;
+      updateHoverState();
+    });
   };
 
+  // URL change handler for SPAs
   const onUrlChange = () => {
     lastVideoRect = null;
+    
+    if (!shouldShowOverlay()) {
+      hideOverlay();
+      return;
+    }
+
     ensureOverlay();
-    // Poll briefly for delayed video rendering in SPAs
+    
+    // Poll for delayed video rendering
     let attempts = 0;
     const poll = setInterval(() => {
-      if (++attempts >= 10 || getPrimaryVideo()) { clearInterval(poll); ensureOverlay(); }
+      attempts++;
+      if (attempts >= 10 || getPrimaryVideo()) {
+        clearInterval(poll);
+        ensureOverlay();
+      }
     }, 500);
   };
 
+  // Install SPA navigation hooks
   const installSpaHooks = () => {
     if (spaHooksInstalled) return;
     spaHooksInstalled = true;
 
-    const wrap = (fn) => function() { const r = fn.apply(this, arguments); onUrlChange(); return r; };
-    if (typeof history.pushState === 'function') history.pushState = wrap(history.pushState);
-    if (typeof history.replaceState === 'function') history.replaceState = wrap(history.replaceState);
+    const wrap = (fn) => function() {
+      const result = fn.apply(this, arguments);
+      onUrlChange();
+      return result;
+    };
+
+    if (typeof history.pushState === 'function') {
+      history.pushState = wrap(history.pushState);
+    }
+    if (typeof history.replaceState === 'function') {
+      history.replaceState = wrap(history.replaceState);
+    }
 
     const events = ['popstate', 'yt-navigate-finish', 'yt-page-data-updated', 'yt-navigate-start'];
     events.forEach((evt) => window.addEventListener(evt, onUrlChange));
   };
 
+  // Attach global event listeners
   const attachListeners = () => {
     window.addEventListener('scroll', requestPosition, true);
     window.addEventListener('resize', requestPosition);
@@ -228,24 +378,39 @@
     document.addEventListener('fullscreenchange', requestPosition, true);
   };
 
-  overlayApi.init = (options = {}) => {
-    config = { ...config, ...options };
+  // Initialize the overlay system
+  overlayApi.init = () => {
+    if (initialized) return;
+    initialized = true;
+
     installSpaHooks();
     attachListeners();
-    if (!suppressed) ensureOverlay();
+
+    // Initial setup based on current state
+    if (shouldShowOverlay()) {
+      ensureOverlay();
+    }
 
     // Watchdog for missed SPA events
-    setInterval(() => { if (!suppressed && getPrimaryVideo()) ensureOverlay(); }, 2000);
+    setInterval(() => {
+      if (shouldShowOverlay() && getPrimaryVideo()) {
+        ensureOverlay();
+      }
+    }, 2000);
   };
 
+  // Public API
   overlayApi.ensure = ensureOverlay;
   overlayApi.updateState = updateButtonStyles;
   overlayApi.requestPosition = requestPosition;
-  overlayApi.setSuppressed = (value) => {
-    const next = Boolean(value);
-    if (next === suppressed) return;
-    suppressed = next;
-    suppressed ? hideOverlay() : ensureOverlay();
+  
+  // Called when overlayEnabled setting changes
+  overlayApi.refresh = () => {
+    if (shouldShowOverlay()) {
+      ensureOverlay();
+    } else {
+      hideOverlay();
+    }
   };
 
   VN.overlay = overlayApi;

@@ -3,7 +3,9 @@
   window.videoEnhancerInitialized = true;
 
   const VN = window.VideoEnhancer || (window.VideoEnhancer = {});
-  const { state } = VN;
+  
+  // Helper to always get current state
+  const getState = () => VN.state;
 
   // Site variant detection
   const SITE_VARIANT = (() => {
@@ -75,8 +77,9 @@
 
   let visibilitySuspended = false;
   const handleVisibilityChange = () => {
+    const state = getState();
     if (document.hidden) {
-      if (state.enabled) {
+      if (state?.enabled) {
         VN.updateAllVideos(null);
         visibilitySuspended = true;
       }
@@ -95,30 +98,15 @@
     await VN.loadPersistedState();
     VN.ensureFilter();
     
-    // Initialize Overlay
-    if (VN.overlay?.init) {
-      VN.overlay.init({
-        isEnabled: () => state.enabled,
-        onToggle: () => {
-          const willEnable = !state.enabled;
-          try {
-            if (window.top !== window) {
-              window.top.postMessage({ __videoEnhancer: true, type: 'VIDEO_ENHANCER_STATE_PATCH', patch: { enabled: willEnable } }, '*');
-            }
-          } catch (_) {}
-          state.enabled = willEnable;
-          VN.panel?.syncUI?.();
-          VN.schedulePersist('inline-toggle');
-          VN.scheduleRefresh('inline-toggle');
-          VN.panel?.broadcastState?.();
-        }
-      });
-      VN.overlay.setSuppressed?.(!state.overlayEnabled);
-    }
+    // Initialize Overlay - it reads state.overlayEnabled directly
+    VN.overlay?.init?.();
 
-    // Initialize Panel
-    VN.panel?.ensure();
-    VN.panel?.syncUI();
+    // Initialize Panel - only create if it should be visible
+    const state = getState();
+    if (state?.panelVisible) {
+      VN.panel?.ensure();
+      VN.panel?.syncUI();
+    }
 
     initMutationObserver();
     VN.refreshEffect();
@@ -128,7 +116,25 @@
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((message) => {
       if (message && message.type === 'VIDEO_ENHANCER_TOGGLE_PANEL') {
-        VN.panel?.setVisible(!state.panelVisible);
+        // Only the top frame should toggle the panel; otherwise each iframe can
+        // toggle in quick succession causing an open/close "flash".
+        let isTopFrame = true;
+        try { isTopFrame = window.top === window; } catch (_) { isTopFrame = true; }
+
+        if (!isTopFrame) {
+          try {
+            window.top.postMessage({ __videoEnhancer: true, type: 'VIDEO_ENHANCER_TOGGLE_PANEL' }, '*');
+          } catch (_) {}
+          return;
+        }
+
+        if (typeof VN.panel?.toggle === 'function') {
+          VN.panel.toggle();
+          return;
+        }
+
+        const state = getState();
+        VN.panel?.setVisible?.(!state?.panelVisible);
       }
     });
   }

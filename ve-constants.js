@@ -48,8 +48,11 @@
 
   // Persistence
   let persistTimer = null;
+  let lastPersistTime = 0;
+  
   const buildPersistSnapshot = () => ({
     version: VN.consts.STORAGE_VERSION,
+    timestamp: Date.now(),
     data: {
       enabled: VN.state.enabled,
       panelVisible: VN.state.panelVisible,
@@ -66,10 +69,98 @@
     if (persistTimer) clearTimeout(persistTimer);
     persistTimer = setTimeout(() => {
       persistTimer = null;
+      lastPersistTime = Date.now();
       const snapshot = buildPersistSnapshot();
       try { chrome.storage.local.set({ [VN.consts.STORAGE_KEY]: snapshot }); } catch (_) {}
     }, VN.consts.PERSIST_DEBOUNCE_MS);
   };
+
+  // Apply state from storage (used for cross-tab sync)
+  const applyStorageState = (snapshot, skipPanelVisible = true) => {
+    if (!snapshot) return false;
+    
+    let changed = false;
+    
+    if (typeof snapshot.enabled === 'boolean' && VN.state.enabled !== snapshot.enabled) {
+      VN.state.enabled = snapshot.enabled;
+      changed = true;
+    }
+    
+    // Skip panelVisible sync - each tab manages its own panel
+    if (!skipPanelVisible && typeof snapshot.panelVisible === 'boolean') {
+      VN.state.panelVisible = snapshot.panelVisible;
+    }
+    
+    if ((snapshot.activeTab === 'custom' || snapshot.activeTab === 'preset') && VN.state.activeTab !== snapshot.activeTab) {
+      VN.state.activeTab = snapshot.activeTab;
+      changed = true;
+    }
+    
+    if (typeof snapshot.compatibilityMode === 'boolean' && VN.state.compatibilityMode !== snapshot.compatibilityMode) {
+      VN.state.compatibilityMode = snapshot.compatibilityMode;
+      changed = true;
+    }
+    
+    if (typeof snapshot.overlayEnabled === 'boolean' && VN.state.overlayEnabled !== snapshot.overlayEnabled) {
+      VN.state.overlayEnabled = snapshot.overlayEnabled;
+      changed = true;
+    }
+    
+    if (snapshot.settings && typeof snapshot.settings === 'object') {
+      ['sharpen','contrast','saturation','brightness','gamma'].forEach((k) => {
+        if (typeof snapshot.settings[k] === 'number' && VN.state.settings[k] !== snapshot.settings[k]) {
+          VN.state.settings[k] = snapshot.settings[k];
+          changed = true;
+        }
+      });
+    }
+    
+    // Sync panel position
+    if (snapshot.panelPosition && typeof snapshot.panelPosition === 'object') {
+      VN.state.panelPosition = {
+        useCustom: Boolean(snapshot.panelPosition.useCustom),
+        top: typeof snapshot.panelPosition.top === 'number' ? snapshot.panelPosition.top : VN.state.panelPosition.top,
+        left: typeof snapshot.panelPosition.left === 'number' ? snapshot.panelPosition.left : VN.state.panelPosition.left
+      };
+    }
+    
+    return changed;
+  };
+
+  // Listen for storage changes from other tabs
+  if (chrome?.storage?.onChanged) {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== 'local') return;
+      
+      const change = changes[VN.consts.STORAGE_KEY];
+      if (!change || !change.newValue) return;
+      
+      const payload = change.newValue;
+      const timestamp = payload.timestamp || 0;
+      
+      // Ignore changes we just made (within 500ms)
+      if (timestamp && lastPersistTime && Math.abs(timestamp - lastPersistTime) < 500) {
+        return;
+      }
+      
+      const snapshot = payload.data && typeof payload.data === 'object' ? payload.data : payload;
+      const changed = applyStorageState(snapshot, true);
+      
+      if (changed) {
+        // Update UI and effects
+        VN.overlay?.refresh?.();
+        VN.overlay?.updateState?.();
+        VN.panel?.syncUI?.();
+        VN.panel?.broadcastState?.();
+        
+        if (VN.state.enabled) {
+          VN.scheduleRefresh?.('cross-tab-sync');
+        } else {
+          VN.updateAllVideos?.(null);
+        }
+      }
+    });
+  }
 
   VN.loadPersistedState = () => new Promise((resolve) => {
     if (!chrome?.storage?.local) { resolve(); return; }
@@ -79,28 +170,9 @@
         const snapshot = payload && typeof payload === 'object'
           ? (payload.data && typeof payload.data === 'object' ? payload.data : payload)
           : null;
-        if (snapshot) {
-          if (typeof snapshot.enabled === 'boolean') VN.state.enabled = snapshot.enabled;
-          if (typeof snapshot.panelVisible === 'boolean') VN.state.panelVisible = snapshot.panelVisible;
-          if (snapshot.activeTab === 'custom' || snapshot.activeTab === 'preset') VN.state.activeTab = snapshot.activeTab;
-          if (typeof snapshot.compatibilityMode === 'boolean') VN.state.compatibilityMode = snapshot.compatibilityMode;
-          if (typeof snapshot.overlayEnabled === 'boolean') VN.state.overlayEnabled = snapshot.overlayEnabled;
-          const src = (snapshot.settings && typeof snapshot.settings === 'object') ? snapshot.settings : null;
-          if (src) {
-            const restored = { ...VN.DEFAULT_SETTINGS };
-            ['sharpen','contrast','saturation','brightness','gamma'].forEach((k)=>{
-              if (typeof src[k] === 'number') restored[k] = src[k];
-            });
-            VN.state.settings = restored;
-          }
-          if (snapshot.panelPosition && typeof snapshot.panelPosition === 'object') {
-            VN.state.panelPosition = {
-              useCustom: Boolean(snapshot.panelPosition.useCustom),
-              top: typeof snapshot.panelPosition.top === 'number' ? snapshot.panelPosition.top : VN.state.panelPosition.top,
-              left: typeof snapshot.panelPosition.left === 'number' ? snapshot.panelPosition.left : VN.state.panelPosition.left
-            };
-          }
-        }
+        
+        // On initial load, apply everything including panelVisible
+        applyStorageState(snapshot, false);
         resolve();
       });
     } catch (_) { resolve(); }

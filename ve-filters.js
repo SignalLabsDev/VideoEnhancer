@@ -1,6 +1,9 @@
 (function(){
   const VN = window.VideoEnhancer || (window.VideoEnhancer = {});
-  const { ids, state, consts } = VN;
+  const { ids, consts } = VN;
+  
+  // Helper to always get current state
+  const getState = () => VN.state;
 
   const baseKernel = [0, 0, 0, 0, 1, 0, 0, 0, 0];
   const sharpenKernel = [0, -1, 0, -1, 5, -1, 0, -1, 0];
@@ -40,7 +43,7 @@
 
     const conv = document.createElementNS(svgNS, 'feConvolveMatrix');
     conv.setAttribute('order', '3');
-    conv.setAttribute('kernelMatrix', computeKernelString(state.settings.sharpen));
+    conv.setAttribute('kernelMatrix', computeKernelString(getState()?.settings?.sharpen ?? 0.3));
     conv.setAttribute('edgeMode', 'duplicate');
 
     filter.appendChild(conv);
@@ -80,6 +83,7 @@
 
   const applyFilterToVideo = (video, settings) => {
     if (!(video instanceof HTMLVideoElement)) return;
+    const state = getState();
     const root = typeof video.getRootNode === 'function' ? video.getRootNode() : document;
     const record = ensureFilterForRoot(root || document);
     VN.ensureFilter();
@@ -89,7 +93,8 @@
     }
     const originalFilter = video.dataset[ids.DATA_ORIGINAL_FILTER_KEY];
 
-    const allowSvg = !state.compatibilityMode && record?.filterId && video.dataset.videoEnhancerNoSvg !== '1';
+    const compatibilityMode = state?.compatibilityMode ?? false;
+    const allowSvg = !compatibilityMode && record?.filterId && video.dataset.videoEnhancerNoSvg !== '1';
 
     const buildFilterString = (includeSvg) => {
       const parts = [];
@@ -111,7 +116,7 @@
       try { record.convolveNode.setAttribute('kernelMatrix', computeKernelString(settings.sharpen)); } catch (_) {}
     }
 
-    const token = `${settings.sharpen.toFixed(4)}|${settings.contrast.toFixed(4)}|${settings.saturation.toFixed(4)}|${settings.brightness.toFixed(4)}|${settings.gamma.toFixed(4)}|${state.compatibilityMode}`;
+    const token = `${settings.sharpen.toFixed(4)}|${settings.contrast.toFixed(4)}|${settings.saturation.toFixed(4)}|${settings.brightness.toFixed(4)}|${settings.gamma.toFixed(4)}|${compatibilityMode}`;
     if (video.dataset[ids.DATA_APPLIED_KEY] === 'true' && video.dataset[ids.DATA_SETTINGS_KEY] === token && video.dataset[ids.DATA_CURRENT_FILTER_KEY] === newFilter) return;
 
     video.style.setProperty('filter', newFilter, 'important');
@@ -194,8 +199,12 @@
   };
 
   VN.refreshEffect = () => {
-    if (!state.enabled) { VN.updateAllVideos(null); return; }
-    const s = state.settings; VN.ensureFilter(); VN.updateKernel(s.sharpen); VN.updateAllVideos(s);
+    const state = getState();
+    if (!state || !state.enabled) { VN.updateAllVideos(null); return; }
+    const s = state.settings;
+    VN.ensureFilter();
+    VN.updateKernel(s.sharpen);
+    VN.updateAllVideos(s);
   };
 
   let refreshScheduled = false;
