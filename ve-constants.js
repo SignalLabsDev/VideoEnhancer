@@ -1,6 +1,10 @@
 (function(){
   const VN = window.VideoEnhancer || (window.VideoEnhancer = {});
 
+  // Prevent re-initialization if already loaded
+  if (VN.constantsInitialized) return;
+  VN.constantsInitialized = true;
+
   // IDs and keys
   const FILTER_ID = `video-enhancer-filter-${Math.random().toString(36).slice(2)}`;
   VN.ids = {
@@ -48,7 +52,6 @@
 
   // Persistence
   let persistTimer = null;
-  let lastPersistTime = 0;
   
   const buildPersistSnapshot = () => ({
     version: VN.consts.STORAGE_VERSION,
@@ -69,7 +72,6 @@
     if (persistTimer) clearTimeout(persistTimer);
     persistTimer = setTimeout(() => {
       persistTimer = null;
-      lastPersistTime = Date.now();
       const snapshot = buildPersistSnapshot();
       try { chrome.storage.local.set({ [VN.consts.STORAGE_KEY]: snapshot }); } catch (_) {}
     }, VN.consts.PERSIST_DEBOUNCE_MS);
@@ -77,7 +79,7 @@
 
   // Apply state from storage (used for cross-tab sync)
   const applyStorageState = (snapshot, skipPanelVisible = true) => {
-    if (!snapshot) return false;
+    if (!snapshot || typeof snapshot !== 'object') return false;
     
     let changed = false;
     
@@ -108,59 +110,36 @@
     
     if (snapshot.settings && typeof snapshot.settings === 'object') {
       ['sharpen','contrast','saturation','brightness','gamma'].forEach((k) => {
-        if (typeof snapshot.settings[k] === 'number' && VN.state.settings[k] !== snapshot.settings[k]) {
-          VN.state.settings[k] = snapshot.settings[k];
+        const val = snapshot.settings[k];
+        if (typeof val === 'number' && !isNaN(val) && isFinite(val) && VN.state.settings[k] !== val) {
+          VN.state.settings[k] = val;
           changed = true;
         }
       });
     }
     
-    // Sync panel position
+    // Sync panel position with validation
     if (snapshot.panelPosition && typeof snapshot.panelPosition === 'object') {
-      VN.state.panelPosition = {
-        useCustom: Boolean(snapshot.panelPosition.useCustom),
-        top: typeof snapshot.panelPosition.top === 'number' ? snapshot.panelPosition.top : VN.state.panelPosition.top,
-        left: typeof snapshot.panelPosition.left === 'number' ? snapshot.panelPosition.left : VN.state.panelPosition.left
+      const pos = snapshot.panelPosition;
+      const newPos = {
+        useCustom: Boolean(pos.useCustom),
+        top: (typeof pos.top === 'number' && isFinite(pos.top)) ? pos.top : VN.state.panelPosition.top,
+        left: (typeof pos.left === 'number' && isFinite(pos.left)) ? pos.left : VN.state.panelPosition.left
       };
+      
+      if (newPos.useCustom !== VN.state.panelPosition.useCustom || 
+          newPos.top !== VN.state.panelPosition.top || 
+          newPos.left !== VN.state.panelPosition.left) {
+        VN.state.panelPosition = newPos;
+        changed = true;
+      }
     }
     
     return changed;
   };
 
-  // Listen for storage changes from other tabs
-  if (chrome?.storage?.onChanged) {
-    chrome.storage.onChanged.addListener((changes, areaName) => {
-      if (areaName !== 'local') return;
-      
-      const change = changes[VN.consts.STORAGE_KEY];
-      if (!change || !change.newValue) return;
-      
-      const payload = change.newValue;
-      const timestamp = payload.timestamp || 0;
-      
-      // Ignore changes we just made (within 500ms)
-      if (timestamp && lastPersistTime && Math.abs(timestamp - lastPersistTime) < 500) {
-        return;
-      }
-      
-      const snapshot = payload.data && typeof payload.data === 'object' ? payload.data : payload;
-      const changed = applyStorageState(snapshot, true);
-      
-      if (changed) {
-        // Update UI and effects
-        VN.overlay?.refresh?.();
-        VN.overlay?.updateState?.();
-        VN.panel?.syncUI?.();
-        VN.panel?.broadcastState?.();
-        
-        if (VN.state.enabled) {
-          VN.scheduleRefresh?.('cross-tab-sync');
-        } else {
-          VN.updateAllVideos?.(null);
-        }
-      }
-    });
-  }
+  // Per-tab state: Each tab loads from storage on init but doesn't sync with other tabs.
+  // This is simpler and more reliable than cross-tab synchronization.
 
   VN.loadPersistedState = () => new Promise((resolve) => {
     if (!chrome?.storage?.local) { resolve(); return; }
@@ -171,7 +150,7 @@
           ? (payload.data && typeof payload.data === 'object' ? payload.data : payload)
           : null;
         
-        // On initial load, apply everything including panelVisible
+        // Load all state from storage on init
         applyStorageState(snapshot, false);
         resolve();
       });

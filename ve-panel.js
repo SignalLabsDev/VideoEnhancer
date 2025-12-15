@@ -1,6 +1,10 @@
 (() => {
   const VN = window.VideoEnhancer || (window.VideoEnhancer = {});
   
+  // Prevent re-initialization
+  if (VN.panelInitialized) return;
+  VN.panelInitialized = true;
+  
   // Helper to always get current state
   const getState = () => VN.state;
   
@@ -66,29 +70,7 @@
     panelApi.setVisible = panelApi.toggle;
     panelApi.broadcastState = () => {};
 
-    // Listen for state sync from parent
-    window.addEventListener('message', (event) => {
-      const data = event?.data;
-      if (!data || data.__videoEnhancer !== true) return;
-
-      if (data.type === 'VIDEO_ENHANCER_STATE_SYNC' && data.state) {
-        const state = getState();
-        if (!state) return;
-        
-        const s = data.state;
-        if (typeof s.enabled === 'boolean') state.enabled = s.enabled;
-        if (typeof s.compatibilityMode === 'boolean') state.compatibilityMode = s.compatibilityMode;
-        if (typeof s.overlayEnabled === 'boolean') state.overlayEnabled = s.overlayEnabled;
-        if (s.settings && typeof s.settings === 'object') {
-          ['sharpen','contrast','saturation','brightness','gamma'].forEach((k) => {
-            if (typeof s.settings[k] === 'number') state.settings[k] = s.settings[k];
-          });
-        }
-        VN.overlay?.refresh?.();
-        VN.overlay?.updateState?.();
-        VN.scheduleRefresh?.('state-sync');
-      }
-    });
+    // Per-tab state: iframes don't need state sync from parent
 
     VN.panel = panelApi;
     return;
@@ -102,27 +84,7 @@
   const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
   const formatPercent = (value) => `${Math.round(value * 100)}%`;
 
-  // Build state snapshot for broadcasting to iframes
-  const buildSyncState = () => {
-    const state = getState();
-    if (!state) return {};
-    return {
-      enabled: state.enabled,
-      compatibilityMode: state.compatibilityMode,
-      overlayEnabled: state.overlayEnabled,
-      settings: { ...state.settings }
-    };
-  };
-
-  // Broadcast state to all child iframes
-  const broadcastState = () => {
-    const message = { __videoEnhancer: true, type: 'VIDEO_ENHANCER_STATE_SYNC', state: buildSyncState() };
-    try {
-      for (let i = 0; i < window.frames.length; i += 1) {
-        try { window.frames[i].postMessage(message, '*'); } catch (_) {}
-      }
-    } catch (_) {}
-  };
+  // Per-tab state management: No cross-frame broadcasting needed
 
   // Reset all DOM references
   const resetDomRefs = () => {
@@ -284,16 +246,19 @@
     const newEnabled = !state.enabled;
     state.enabled = newEnabled;
     
-    syncUI();
+    // Update UI immediately
+    if (panelNode && panelNode.isConnected) {
+      syncUI();
+    }
+    
     VN.schedulePersist?.('main-toggle');
     
+    // Apply or remove filter
     if (newEnabled) {
       VN.scheduleRefresh?.('main-toggle');
     } else {
       VN.updateAllVideos?.(null);
     }
-    
-    broadcastState();
   };
 
   const handleCompatibilityToggle = (event) => {
@@ -306,7 +271,6 @@
     if (state.enabled) {
       VN.scheduleRefresh?.('compatibility-toggle');
     }
-    broadcastState();
   };
 
   const handleOverlayToggle = (event) => {
@@ -315,12 +279,13 @@
     
     state.overlayEnabled = event?.target?.checked ?? !state.overlayEnabled;
     
-    // Refresh overlay visibility
+    // Update UI immediately
+    syncUI();
+    
+    // Refresh overlay visibility (will hide if disabled)
     VN.overlay?.refresh?.();
     
-    syncUI();
     VN.schedulePersist?.('overlay-toggle');
-    broadcastState();
   };
 
   const handleSliderInput = (key, event) => {
@@ -344,7 +309,6 @@
     if (state.enabled) {
       VN.scheduleRefresh?.(`slider-${key}`);
     }
-    broadcastState();
   };
 
   const handlePointerMove = (event) => {
@@ -548,22 +512,22 @@
       resetDomRefs();
     }
 
-    // If panel already exists and is connected, just ensure it's wired
+    // Check if panel already exists in DOM (e.g., from previous injection)
+    if (!panelNode) {
+      panelNode = document.getElementById('video-enhancer-panel');
+    }
+
+    // If panel exists and is connected, ensure it's wired
     if (panelNode && panelNode.isConnected) {
       wirePanelNode();
       return;
     }
 
-    // Check if panel already exists in DOM (e.g., from previous injection)
-    panelNode = document.getElementById('video-enhancer-panel');
-    if (panelNode) {
+    // Create new panel if needed
+    if (!panelNode) {
+      createPanelNode();
       wirePanelNode();
-      return;
     }
-
-    // Create new panel
-    createPanelNode();
-    wirePanelNode();
   };
 
   // Set panel visibility
@@ -582,7 +546,8 @@
     state.panelVisible = newVisible;
     updatePanelVisibility();
     
-    if (newVisible && panelNode) {
+    // Always sync UI when visibility changes to ensure correct state
+    if (panelNode) {
       syncUI();
     }
 
@@ -592,14 +557,18 @@
   // Toggle panel visibility
   panelApi.toggle = () => {
     const state = getState();
-    panelApi.setVisible(!state?.panelVisible);
+    const newVisible = !state?.panelVisible;
+    
+    // If opening, ensure panel exists and is wired first
+    if (newVisible) {
+      panelApi.ensure();
+    }
+    
+    panelApi.setVisible(newVisible);
   };
 
   // Sync UI to current state
   panelApi.syncUI = syncUI;
-
-  // Broadcast state to child frames
-  panelApi.broadcastState = broadcastState;
 
   // =========================================================================
   // INITIALIZATION

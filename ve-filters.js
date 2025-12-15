@@ -1,5 +1,10 @@
 (function(){
   const VN = window.VideoEnhancer || (window.VideoEnhancer = {});
+  
+  // Prevent re-initialization
+  if (VN.filtersInitialized) return;
+  VN.filtersInitialized = true;
+  
   const { ids, consts } = VN;
   
   // Helper to always get current state

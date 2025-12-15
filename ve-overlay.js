@@ -1,6 +1,10 @@
 (() => {
   const VN = window.VideoEnhancer || (window.VideoEnhancer = {});
   
+  // Prevent re-initialization
+  if (VN.overlayInitialized) return;
+  VN.overlayInitialized = true;
+  
   // Helper to always get current state
   const getState = () => VN.state;
   
@@ -271,8 +275,6 @@
       } else {
         VN.updateAllVideos?.(null);
       }
-      
-      VN.panel?.broadcastState?.();
     });
 
     // Settings button - opens the panel
@@ -304,6 +306,13 @@
     if (!shouldShowOverlay()) {
       hideOverlay();
       return;
+    }
+
+    // Check if overlay was removed from DOM
+    if (overlayContainer && !overlayContainer.isConnected) {
+      overlayContainer = null;
+      toggleButton = null;
+      settingsButton = null;
     }
 
     if (!overlayContainer) {
@@ -406,10 +415,14 @@
   
   // Called when overlayEnabled setting changes
   overlayApi.refresh = () => {
-    if (shouldShowOverlay()) {
-      ensureOverlay();
-    } else {
-      hideOverlay();
+    try {
+      if (shouldShowOverlay()) {
+        ensureOverlay();
+      } else {
+        hideOverlay();
+      }
+    } catch (e) {
+      console.debug('[VideoEnhancer] Overlay refresh error:', e);
     }
   };
 

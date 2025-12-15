@@ -112,6 +112,11 @@
     VN.refreshEffect();
   };
 
+  // Track initialization state
+  let initPromise = null;
+  let isInitialized = false;
+  let lastToggleTime = 0;
+
   // Listen for messages from popup/background
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((message) => {
@@ -128,21 +133,48 @@
           return;
         }
 
-        if (typeof VN.panel?.toggle === 'function') {
-          VN.panel.toggle();
+        // Debounce rapid toggles to prevent flashing
+        const now = Date.now();
+        if (now - lastToggleTime < 300) {
           return;
         }
+        lastToggleTime = now;
 
-        const state = getState();
-        VN.panel?.setVisible?.(!state?.panelVisible);
+        // Ensure init completes before handling panel toggle
+        const handleToggle = () => {
+          const state = getState();
+          if (!state) return;
+          
+          // Toggle panel visibility
+          const newVisible = !state.panelVisible;
+          
+          if (typeof VN.panel?.setVisible === 'function') {
+            VN.panel.setVisible(newVisible);
+          }
+        };
+
+        if (isInitialized) {
+          handleToggle();
+        } else if (initPromise) {
+          // Wait for init to complete so we have the correct persisted state
+          initPromise.then(handleToggle).catch(() => handleToggle());
+        } else {
+          // Shouldn't happen, but handle gracefully
+          handleToggle();
+        }
       }
     });
   }
 
   const runInit = () => {
-    init().catch((error) => {
-      console.error('[VideoEnhancer] Init error', error);
-    });
+    initPromise = init()
+      .then(() => {
+        isInitialized = true;
+      })
+      .catch((error) => {
+        console.error('[VideoEnhancer] Init error', error);
+        isInitialized = true; // Mark as done even on error to prevent hanging
+      });
   };
 
   if (document.readyState === 'loading') {
