@@ -21,6 +21,7 @@
   let lastMouseY = 0;
   let repositionRAF = null;
   let hoverRAF = null;
+  let pollInterval = null;
   let spaHooksInstalled = false;
   let initialized = false;
 
@@ -57,67 +58,32 @@
   };
 
   // Get minimum video size thresholds
-  const getMinTargetSize = () => {
+  function getMinTargetSize() {
     const c = VN?.consts;
     return {
       w: typeof c?.MIN_TARGET_WIDTH === 'number' ? c.MIN_TARGET_WIDTH : 320,
       h: typeof c?.MIN_TARGET_HEIGHT === 'number' ? c.MIN_TARGET_HEIGHT : 180
     };
-  };
-
-  // Collect all videos including those in shadow DOM
-  const collectVideosDeep = () => {
-    const found = [];
-    const stack = [document.documentElement];
-    const seen = new Set();
-
-    while (stack.length) {
-      const node = stack.pop();
-      if (!node || seen.has(node)) continue;
-      seen.add(node);
-
-      if (node instanceof HTMLVideoElement) {
-        found.push(node);
-        continue;
-      }
-
-      if (node instanceof Element) {
-        const sr = node.shadowRoot;
-        if (sr && sr.mode === 'open') {
-          stack.push(sr);
-        }
-      }
-
-      if (node instanceof DocumentFragment || node instanceof Element || node instanceof Document) {
-        const children = node.childNodes;
-        if (children && children.length) {
-          for (let i = children.length - 1; i >= 0; i -= 1) {
-            stack.push(children[i]);
-          }
-        }
-      }
-    }
-
-    return found;
-  };
+  }
 
   // Check if rect is visible in viewport
-  const rectIntersectsViewport = (rect) => {
+  function rectIntersectsViewport(rect) {
     if (!rect) return false;
     if (rect.width <= 0 || rect.height <= 0) return false;
     if (rect.right <= 0 || rect.bottom <= 0) return false;
     if (rect.left >= window.innerWidth || rect.top >= window.innerHeight) return false;
     return true;
-  };
+  }
 
   // Get the largest visible video element
-  const getPrimaryVideo = () => {
+  function getPrimaryVideo() {
     const min = getMinTargetSize();
     const minArea = min.w * min.h;
     let best = null;
     let bestArea = 0;
+    let bestIsPlaying = false;
 
-    collectVideosDeep().forEach((v) => {
+    VN.collectVideos().forEach((v) => {
       const rect = v.getBoundingClientRect();
       if (!rectIntersectsViewport(rect)) return;
       if ((rect.width * rect.height) < minArea) return;
@@ -126,14 +92,18 @@
       if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) === 0) return;
       
       const area = rect.width * rect.height;
-      if (area > bestArea) {
+      const isPlaying = !!(v.currentTime > 0 && !v.paused && !v.ended && v.readyState > 2);
+
+      // Prioritize playing videos, then by area
+      if (!best || (isPlaying && !bestIsPlaying) || (isPlaying === bestIsPlaying && area > bestArea)) {
         best = { video: v, rect };
         bestArea = area;
+        bestIsPlaying = isPlaying;
       }
     });
 
     return best;
-  };
+  }
 
   // Update hover state (show/hide based on mouse position over video)
   const updateHoverState = () => {
@@ -319,6 +289,20 @@
       createOverlay();
     }
 
+    // Fullscreen handling: Move overlay into fullscreen element if needed
+    const fsElement = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement;
+    const targetParent = fsElement || document.body || document.documentElement;
+    
+    if (overlayContainer && overlayContainer.parentElement !== targetParent) {
+      try {
+        targetParent.appendChild(overlayContainer);
+      } catch (_) {
+        if (targetParent !== document.body) {
+          (document.body || document.documentElement).appendChild(overlayContainer);
+        }
+      }
+    }
+
     updateButtonStyles();
     positionOverlay();
   };
@@ -339,6 +323,11 @@
   const onUrlChange = () => {
     lastVideoRect = null;
     
+    if (pollInterval) {
+      clearInterval(pollInterval);
+      pollInterval = null;
+    }
+
     if (!shouldShowOverlay()) {
       hideOverlay();
       return;
@@ -348,10 +337,11 @@
     
     // Poll for delayed video rendering
     let attempts = 0;
-    const poll = setInterval(() => {
+    pollInterval = setInterval(() => {
       attempts++;
       if (attempts >= 10 || getPrimaryVideo()) {
-        clearInterval(poll);
+        clearInterval(pollInterval);
+        pollInterval = null;
         ensureOverlay();
       }
     }, 500);
@@ -384,7 +374,9 @@
     window.addEventListener('scroll', requestPosition, true);
     window.addEventListener('resize', requestPosition);
     window.addEventListener('mousemove', onMouseMove, true);
-    document.addEventListener('fullscreenchange', requestPosition, true);
+    
+    const fsEvents = ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'];
+    fsEvents.forEach(evt => document.addEventListener(evt, requestPosition, true));
   };
 
   // Initialize the overlay system
@@ -400,10 +392,15 @@
       ensureOverlay();
     }
 
-    // Watchdog for missed SPA events
+    // Watchdog for missed SPA events and DOM changes
     setInterval(() => {
-      if (shouldShowOverlay() && getPrimaryVideo()) {
-        ensureOverlay();
+      if (shouldShowOverlay()) {
+        const primary = getPrimaryVideo();
+        if (primary) {
+          ensureOverlay();
+        } else if (overlayContainer && overlayContainer.style.visibility !== 'hidden') {
+          hideOverlay();
+        }
       }
     }, 2000);
   };

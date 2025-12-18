@@ -156,4 +156,59 @@
       });
     } catch (_) { resolve(); }
   });
+
+  // Listen for storage changes to sync state across frames/tabs
+  if (chrome?.storage?.onChanged) {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== 'local' || !changes[VN.consts.STORAGE_KEY]) return;
+      
+      const payload = changes[VN.consts.STORAGE_KEY].newValue;
+      const snapshot = payload && typeof payload === 'object'
+        ? (payload.data && typeof payload.data === 'object' ? payload.data : payload)
+        : null;
+      
+      if (applyStorageState(snapshot)) {
+        // If state changed, trigger a refresh in this frame
+        VN.scheduleRefresh?.('storage-sync');
+        VN.overlay?.refresh?.();
+      }
+    });
+  }
+
+  /**
+   * Deeply collects all video elements, including those inside open Shadow Roots.
+   */
+  VN.collectVideos = () => {
+    const found = [];
+    const stack = [document.documentElement];
+    const seen = new Set();
+
+    while (stack.length) {
+      const node = stack.pop();
+      if (!node || seen.has(node)) continue;
+      seen.add(node);
+
+      if (node instanceof HTMLVideoElement) {
+        found.push(node);
+        continue;
+      }
+
+      if (node instanceof Element) {
+        const sr = node.shadowRoot;
+        if (sr && sr.mode === 'open') {
+          stack.push(sr);
+        }
+      }
+
+      if (node instanceof DocumentFragment || node instanceof Element || node instanceof Document) {
+        const children = node.childNodes;
+        if (children && children.length) {
+          for (let i = children.length - 1; i >= 0; i -= 1) {
+            stack.push(children[i]);
+          }
+        }
+      }
+    }
+    return found;
+  };
 })();

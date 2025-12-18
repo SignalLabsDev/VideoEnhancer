@@ -117,8 +117,12 @@
 
     let newFilter = buildFilterString(Boolean(allowSvg));
 
-    if (allowSvg && record?.convolveNode && lastKernelAmount !== settings.sharpen) {
-      try { record.convolveNode.setAttribute('kernelMatrix', computeKernelString(settings.sharpen)); } catch (_) {}
+    if (allowSvg && record?.convolveNode) {
+      const ks = computeKernelString(settings.sharpen);
+      // Check actual attribute to ensure Shadow DOM filters are updated
+      if (record.convolveNode.getAttribute('kernelMatrix') !== ks) {
+        try { record.convolveNode.setAttribute('kernelMatrix', ks); } catch (_) {}
+      }
     }
 
     const token = `${settings.sharpen.toFixed(4)}|${settings.contrast.toFixed(4)}|${settings.saturation.toFixed(4)}|${settings.brightness.toFixed(4)}|${settings.gamma.toFixed(4)}|${compatibilityMode}`;
@@ -157,41 +161,8 @@
     delete video.dataset.videoEnhancerNoSvg;
   };
 
-  const collectVideos = () => {
-    const found = [];
-    const stack = [document.documentElement];
-    const seen = new Set();
-
-    while (stack.length) {
-      const node = stack.pop();
-      if (!node || seen.has(node)) continue;
-      seen.add(node);
-
-      if (node instanceof HTMLVideoElement) {
-        found.push(node);
-        continue;
-      }
-
-      if (node instanceof Element) {
-        const sr = node.shadowRoot;
-        if (sr && sr.mode === 'open') {
-          stack.push(sr);
-        }
-      }
-
-      if (node instanceof DocumentFragment || node instanceof Element || node instanceof Document) {
-        const children = node.childNodes;
-        if (children && children.length) {
-          for (let i = children.length - 1; i >= 0; i -= 1) stack.push(children[i]);
-        }
-      }
-    }
-
-    return found;
-  };
-
   VN.updateAllVideos = (settings) => {
-    const videos = collectVideos();
+    const videos = VN.collectVideos();
     if (!settings) { videos.forEach(removeFilterFromVideo); return; }
 
     const minArea = consts.MIN_TARGET_WIDTH * consts.MIN_TARGET_HEIGHT;
@@ -199,8 +170,19 @@
       const r = v.getBoundingClientRect();
       return (r.width * r.height) >= minArea;
     });
-    const target = eligible.length ? new Set(eligible) : new Set([videos.sort((a,b)=>{const ra=a.getBoundingClientRect(), rb=b.getBoundingClientRect(); return (rb.width*rb.height)-(ra.width*ra.height);})[0]].filter(Boolean));
-    videos.forEach((v)=>{ if (target.size===0 || target.has(v)) applyFilterToVideo(v, settings); else if (v.dataset[ids.DATA_APPLIED_KEY]==='true') removeFilterFromVideo(v); });
+    
+    // Use a copy for sorting to avoid side effects
+    const target = eligible.length 
+      ? new Set(eligible) 
+      : new Set([...videos].sort((a,b)=>{
+          const ra=a.getBoundingClientRect(), rb=b.getBoundingClientRect(); 
+          return (rb.width*rb.height)-(ra.width*ra.height);
+        }).slice(0, 1).filter(Boolean));
+
+    videos.forEach((v)=>{ 
+      if (target.size===0 || target.has(v)) applyFilterToVideo(v, settings); 
+      else if (v.dataset[ids.DATA_APPLIED_KEY]==='true') removeFilterFromVideo(v); 
+    });
   };
 
   VN.refreshEffect = () => {
@@ -208,8 +190,9 @@
     if (!state || !state.enabled) { VN.updateAllVideos(null); return; }
     const s = state.settings;
     VN.ensureFilter();
-    VN.updateKernel(s.sharpen);
+    // updateAllVideos -> applyFilterToVideo now handles kernel updates per-root
     VN.updateAllVideos(s);
+    lastKernelAmount = s.sharpen;
   };
 
   let refreshScheduled = false;
