@@ -294,6 +294,12 @@
   background: rgba(255, 255, 255, 0.14);
 }
 
+/* A single inset ring while editing; the resting field is unchanged. */
+.video-enhancer-preset-combo:focus-within {
+  outline: 2px solid rgba(132, 90, 224, 0.95);
+  outline-offset: -2px;
+}
+
 #video-enhancer-panel .video-enhancer-preset-combo input[type="text"] {
   flex: 1;
   min-width: 0;
@@ -307,6 +313,11 @@
   color: #f5f7fa;
   font: inherit;
   font-size: 12px;
+}
+
+#video-enhancer-panel .video-enhancer-preset-combo input[type="text"]:focus,
+#video-enhancer-panel .video-enhancer-preset-combo input[type="text"]:focus-visible {
+  outline: none;
 }
 
 .video-enhancer-preset-combo input[type="text"]::placeholder {
@@ -571,7 +582,7 @@
 }
 
 .video-enhancer-slider-value-editor-wrap:focus-within {
-  border-color: rgba(110, 118, 132, 0.75);
+  border-color: rgba(132, 90, 224, 0.95);
 }
 
 #video-enhancer-panel input.video-enhancer-slider-value-editor {
@@ -594,6 +605,11 @@
   line-height: normal;
   text-align: right;
   box-shadow: none;
+}
+
+#video-enhancer-panel input.video-enhancer-slider-value-editor:focus,
+#video-enhancer-panel input.video-enhancer-slider-value-editor:focus-visible {
+  outline: none;
 }
 
 .video-enhancer-disabled .video-enhancer-slider-label {

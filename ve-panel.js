@@ -363,7 +363,7 @@
   };
 
   // Save is disabled until there is a name, and at the 50-preset limit it only
-  // allows updating an existing preset.
+  // allows saving over an existing preset.
   const updateSaveButton = () => {
     if (!savePresetButton) return;
     const state = getState();
@@ -374,11 +374,11 @@
     const atLimit = !existing && (state?.presets?.length || 0) >= 50;
 
     savePresetButton.disabled = !name || atLimit;
-    savePresetButton.textContent = existing ? 'Update' : 'Save';
+    savePresetButton.textContent = 'Save';
     savePresetButton.title = atLimit
       ? 'Preset limit reached (50). Delete one before saving a new preset.'
       : existing
-        ? 'Update this preset with the current settings'
+        ? 'Save the current settings to this preset'
         : 'Save the current settings as a new preset';
   };
 
@@ -695,7 +695,7 @@
     presetFilterActive = false;
     updatePresetOptions();
     setPresetDropdownOpen(false);
-    setPresetStatus(`${existing ? 'Updated' : 'Saved'} "${name}".`);
+    setPresetStatus(`Saved "${name}".`);
     VN.schedulePersist?.('preset-save');
     if (savePresetButton) {
       savePresetButton.classList.add('video-enhancer-saved');
@@ -716,7 +716,7 @@
     updatePresetOptions();
     setPresetDropdownOpen(false);
     syncUI();
-    setPresetStatus(`Applied "${preset.name}".`);
+    setPresetStatus('');
     presetInput?.focus();
     VN.schedulePersist?.('preset-apply');
     if (state.enabled) VN.scheduleRefresh?.('preset-apply');
@@ -739,7 +739,7 @@
     }
     updatePresetOptions();
     setPresetDropdownOpen(keepDropdownOpen);
-    setPresetStatus(`Deleted "${preset.name}".`);
+    setPresetStatus('');
     if (keepDropdownOpen) presetInput?.focus();
     VN.schedulePersist?.('preset-delete');
   };

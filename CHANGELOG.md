@@ -13,6 +13,10 @@
 - Remove invisible overlay controls from the tab order, add accessible names and pressed state, and restore focus after keyboard slider editing.
 - Relay iframe panel toggle requests through the extension service worker instead of accepting page-forgeable window messages.
 
+### Changed
+
+- Keep the preset action labeled Save, show status feedback only for save results and errors, and use a single purple border on text fields while they are being edited.
+
 ## 2.1.1 – 2026-10-23
 
 ### Fixed
