@@ -779,11 +779,37 @@
       });
     });
 
-    // Tab buttons
-    const tabButtons = panelNode.querySelectorAll('[data-video-enhancer-tab]');
+    // Tab buttons. Inactive tabs have tabindex=-1, so arrow-key handling is
+    // required for the Settings tab to be reachable from the keyboard.
+    const tabButtons = Array.from(panelNode.querySelectorAll('[data-video-enhancer-tab]'));
+    const activateTabButton = (button, moveFocus = false) => {
+      const tabName = button?.getAttribute('data-video-enhancer-tab');
+      if (!tabName) return;
+      setActiveTab(tabName);
+      if (moveFocus) button.focus();
+    };
+
     tabButtons.forEach((button) => {
-      button.addEventListener('click', () => {
-        setActiveTab(button.getAttribute('data-video-enhancer-tab'));
+      button.addEventListener('click', () => activateTabButton(button));
+      button.addEventListener('keydown', (event) => {
+        const keys = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
+        if (!keys.includes(event.key)) return;
+
+        event.preventDefault();
+        const currentIndex = tabButtons.indexOf(button);
+        let nextIndex = currentIndex;
+
+        if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+          nextIndex = (currentIndex - 1 + tabButtons.length) % tabButtons.length;
+        } else if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+          nextIndex = (currentIndex + 1) % tabButtons.length;
+        } else if (event.key === 'Home') {
+          nextIndex = 0;
+        } else if (event.key === 'End') {
+          nextIndex = tabButtons.length - 1;
+        }
+
+        activateTabButton(tabButtons[nextIndex], true);
       });
     });
 
@@ -904,7 +930,7 @@
         <h1>Video Enhancer</h1>
         <button id="video-enhancer-hide" type="button" class="video-enhancer-icon-button" aria-label="Hide Video Enhancer">&times;</button>
       </div>
-      <div class="video-enhancer-tabs" role="tablist" aria-label="Video Enhancer modes">
+      <div class="video-enhancer-tabs" role="tablist" aria-label="Video Enhancer modes" aria-orientation="horizontal">
         <button type="button" class="video-enhancer-tab" role="tab" data-video-enhancer-tab="preset" aria-controls="video-enhancer-tab-preset">Default</button>
         <button type="button" class="video-enhancer-tab" role="tab" data-video-enhancer-tab="custom" aria-controls="video-enhancer-tab-custom">Settings</button>
       </div>

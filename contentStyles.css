@@ -641,6 +641,15 @@
   outline: none;
 }
 
+#video-enhancer-panel button:focus-visible,
+#video-enhancer-panel input:focus-visible,
+#video-enhancer-panel summary:focus-visible,
+#video-enhancer-panel .video-enhancer-slider-value:focus-visible,
+#video-enhancer-inline-toggle button:focus-visible {
+  outline: 2px solid rgba(132, 90, 224, 0.95);
+  outline-offset: 2px;
+}
+
 @media (max-width: 900px) {
   #video-enhancer-panel {
     top: auto;
