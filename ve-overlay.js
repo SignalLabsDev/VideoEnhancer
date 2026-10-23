@@ -17,6 +17,8 @@
 
   // State
   let lastVideoRect = null;
+  let youtubePlayerElement = null;
+  let youtubeControlsObserver = null;
   let lastMouseX = 0;
   let lastMouseY = 0;
   let repositionRAF = null;
@@ -24,6 +26,12 @@
   let pollInterval = null;
   let spaHooksInstalled = false;
   let initialized = false;
+  let fullscreenWasActive = false;
+  let fullscreenWasUsingYoutubeControls = false;
+  let overlayIdleHidden = false;
+  let overlayIdleTimer = null;
+
+  const FULLSCREEN_IDLE_TIMEOUT_MS = 3000;
 
   // Styles
   const ACTIVE_STYLE = { bg: 'rgba(15, 23, 42, 0.9)', color: '#9146ff' };
@@ -32,6 +40,72 @@
   // Helper: Check if overlay should be shown
   const shouldShowOverlay = () => {
     return Boolean(getState()?.overlayEnabled);
+  };
+
+  const getFullscreenElement = () => document.fullscreenElement || document.webkitFullscreenElement ||
+    document.mozFullScreenElement || document.msFullscreenElement || null;
+
+  const isFullscreen = () => Boolean(getFullscreenElement());
+
+  const clearOverlayIdleTimer = () => {
+    if (overlayIdleTimer) clearTimeout(overlayIdleTimer);
+    overlayIdleTimer = null;
+  };
+
+  const scheduleOverlayIdleHide = () => {
+    if (!isFullscreen() || youtubePlayerElement) {
+      clearOverlayIdleTimer();
+      overlayIdleHidden = false;
+      return;
+    }
+    clearOverlayIdleTimer();
+    overlayIdleHidden = false;
+    overlayIdleTimer = setTimeout(() => {
+      overlayIdleTimer = null;
+      overlayIdleHidden = true;
+      updateHoverState();
+    }, FULLSCREEN_IDLE_TIMEOUT_MS);
+    if (overlayContainer && lastVideoRect) updateHoverState();
+  };
+
+  const watchYoutubePlayer = (video) => {
+    const player = video?.closest('.html5-video-player') || null;
+    if (player === youtubePlayerElement) return;
+
+    if (youtubeControlsObserver) {
+      youtubeControlsObserver.disconnect();
+      youtubeControlsObserver = null;
+    }
+
+    youtubePlayerElement = player;
+    if (!player || typeof MutationObserver !== 'function') return;
+
+    youtubeControlsObserver = new MutationObserver(() => updateHoverState());
+    youtubeControlsObserver.observe(player, { attributes: true, attributeFilter: ['class'] });
+  };
+
+  const handleFullscreenMode = () => {
+    const fullscreen = isFullscreen();
+    const fullscreenChanged = fullscreen !== fullscreenWasActive;
+    fullscreenWasActive = fullscreen;
+
+    if (!fullscreen) {
+      fullscreenWasUsingYoutubeControls = false;
+      clearOverlayIdleTimer();
+      overlayIdleHidden = false;
+      return;
+    }
+
+    if (youtubePlayerElement) {
+      fullscreenWasUsingYoutubeControls = true;
+      clearOverlayIdleTimer();
+      overlayIdleHidden = false;
+      return;
+    }
+
+    const switchedAwayFromYoutube = fullscreenWasUsingYoutubeControls;
+    fullscreenWasUsingYoutubeControls = false;
+    if (fullscreenChanged || switchedAwayFromYoutube) scheduleOverlayIdleHide();
   };
 
   // Helper: Apply button styling
@@ -45,6 +119,15 @@
 
   // Hide the overlay completely
   const hideOverlay = () => {
+    clearOverlayIdleTimer();
+    overlayIdleHidden = false;
+    fullscreenWasActive = false;
+    fullscreenWasUsingYoutubeControls = false;
+    if (youtubeControlsObserver) {
+      youtubeControlsObserver.disconnect();
+      youtubeControlsObserver = null;
+    }
+    youtubePlayerElement = null;
     if (!overlayContainer) return;
     overlayContainer.style.visibility = 'hidden';
     overlayContainer.style.opacity = '0';
@@ -116,8 +199,13 @@
     const inside = lastMouseX >= r.left && lastMouseX <= r.right && 
                    lastMouseY >= r.top && lastMouseY <= r.bottom;
 
-    overlayContainer.style.opacity = inside ? '1' : '0';
-    overlayContainer.style.pointerEvents = inside ? 'auto' : 'none';
+    const youtubeControlsVisible = !youtubePlayerElement ||
+      !youtubePlayerElement.isConnected ||
+      !youtubePlayerElement.classList.contains('ytp-autohide');
+    const visible = inside && youtubeControlsVisible &&
+      !(isFullscreen() && !youtubePlayerElement && overlayIdleHidden);
+    overlayContainer.style.opacity = visible ? '1' : '0';
+    overlayContainer.style.pointerEvents = visible ? 'auto' : 'none';
   };
 
   // Position the overlay relative to the primary video
@@ -132,10 +220,14 @@
     const best = getPrimaryVideo();
     if (!best) {
       lastVideoRect = null;
+      watchYoutubePlayer(null);
+      handleFullscreenMode();
       hideOverlay();
       return;
     }
 
+    watchYoutubePlayer(best.video);
+    handleFullscreenMode();
     lastVideoRect = best.rect;
     const margin = 8;
     overlayContainer.style.top = `${Math.max(margin, best.rect.top + margin)}px`;
@@ -183,7 +275,7 @@
       visibility: hidden;
       opacity: 0;
       pointer-events: none;
-      transition: opacity 120ms ease;
+      transition: opacity 200ms ease;
     `;
 
     const btnStyle = `
@@ -224,6 +316,7 @@
     toggleButton.addEventListener('click', (e) => {
       e.stopPropagation();
       e.preventDefault();
+      scheduleOverlayIdleHide();
       
       const state = getState();
       if (!state) return;
@@ -255,6 +348,7 @@
     settingsButton.addEventListener('click', (e) => {
       e.stopPropagation();
       e.preventDefault();
+      scheduleOverlayIdleHide();
       
       // If in iframe, message parent; otherwise toggle directly
       try {
@@ -311,12 +405,17 @@
   const onMouseMove = (e) => {
     lastMouseX = e.clientX;
     lastMouseY = e.clientY;
+    if (isFullscreen() && !youtubePlayerElement) scheduleOverlayIdleHide();
     
     if (hoverRAF) return;
     hoverRAF = requestAnimationFrame(() => {
       hoverRAF = null;
       updateHoverState();
     });
+  };
+
+  const onKeyDown = () => {
+    if (isFullscreen() && !youtubePlayerElement) scheduleOverlayIdleHide();
   };
 
   // URL change handler for SPAs
@@ -374,6 +473,7 @@
     window.addEventListener('scroll', requestPosition, true);
     window.addEventListener('resize', requestPosition);
     window.addEventListener('mousemove', onMouseMove, true);
+    window.addEventListener('keydown', onKeyDown, true);
     
     const fsEvents = ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'];
     fsEvents.forEach(evt => document.addEventListener(evt, requestPosition, true));

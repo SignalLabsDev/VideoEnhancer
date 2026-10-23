@@ -32,6 +32,34 @@
     gamma: PRESET_SETTINGS.gamma
   });
 
+  // Neutral values remove all Video Enhancer adjustments from the video.
+  VN.NEUTRAL_SETTINGS = Object.freeze({
+    sharpen: 0,
+    contrast: 1,
+    saturation: 1,
+    brightness: 1,
+    gamma: 1
+  });
+
+  const SETTING_RANGES = Object.freeze({
+    sharpen: [0, 1.5],
+    contrast: [0.5, 2],
+    saturation: [0.5, 2],
+    brightness: [0.5, 2],
+    gamma: [0.5, 2]
+  });
+
+  VN.normalizeSettings = (settings, fallback = VN.DEFAULT_SETTINGS) => {
+    const normalized = {};
+    Object.entries(SETTING_RANGES).forEach(([key, [min, max]]) => {
+      const value = Number(settings?.[key]);
+      const fallbackValue = Number(fallback?.[key]);
+      const safeValue = Number.isFinite(value) ? value : fallbackValue;
+      normalized[key] = Number(Math.min(max, Math.max(min, safeValue)).toFixed(3));
+    });
+    return normalized;
+  };
+
   VN.state = {
     enabled: true,
     panelVisible: false,
@@ -39,6 +67,7 @@
     compatibilityMode: false,
     overlayEnabled: true,
     settings: { ...VN.DEFAULT_SETTINGS },
+    presets: [],
     panelPosition: { useCustom: false, top: 80, left: null }
   };
 
@@ -63,6 +92,11 @@
       compatibilityMode: VN.state.compatibilityMode,
       overlayEnabled: VN.state.overlayEnabled,
       settings: { ...VN.state.settings },
+      presets: VN.state.presets.map((preset) => ({
+        id: preset.id,
+        name: preset.name,
+        settings: { ...preset.settings }
+      })),
       panelPosition: { ...VN.state.panelPosition }
     }
   });
@@ -109,13 +143,34 @@
     }
     
     if (snapshot.settings && typeof snapshot.settings === 'object') {
-      ['sharpen','contrast','saturation','brightness','gamma'].forEach((k) => {
-        const val = snapshot.settings[k];
-        if (typeof val === 'number' && !isNaN(val) && isFinite(val) && VN.state.settings[k] !== val) {
-          VN.state.settings[k] = val;
-          changed = true;
-        }
-      });
+      const normalizedSettings = VN.normalizeSettings(snapshot.settings, VN.state.settings);
+      if (Object.keys(normalizedSettings).some((key) => normalizedSettings[key] !== VN.state.settings[key])) {
+        VN.state.settings = normalizedSettings;
+        changed = true;
+      }
+    }
+
+    if (Array.isArray(snapshot.presets)) {
+      const normalizedPresets = snapshot.presets
+        .slice(0, 50)
+        .filter((preset) => preset && typeof preset === 'object')
+        .map((preset, index) => {
+          const name = typeof preset.name === 'string' ? preset.name.trim().slice(0, 40) : '';
+          const id = typeof preset.id === 'string' && preset.id.length <= 100
+            ? preset.id
+            : `saved-${index}`;
+          if (!name) return null;
+          return {
+            id,
+            name,
+            settings: VN.normalizeSettings(preset.settings, VN.DEFAULT_SETTINGS)
+          };
+        })
+        .filter(Boolean);
+      if (JSON.stringify(normalizedPresets) !== JSON.stringify(VN.state.presets)) {
+        VN.state.presets = normalizedPresets;
+        changed = true;
+      }
     }
     
     // Sync panel position with validation
@@ -169,6 +224,7 @@
       
       if (applyStorageState(snapshot)) {
         // If state changed, trigger a refresh in this frame
+        VN.panel?.syncUI?.();
         VN.scheduleRefresh?.('storage-sync');
         VN.overlay?.refresh?.();
       }
