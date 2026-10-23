@@ -5,7 +5,7 @@
   if (VN.filtersInitialized) return;
   VN.filtersInitialized = true;
   
-  const { ids, consts } = VN;
+  const { ids } = VN;
   
   // Helper to always get current state
   const getState = () => VN.state;
@@ -25,6 +25,23 @@
       return Number.parseFloat(mixed.toFixed(4));
     })
     .join(' ');
+
+  // A "gamma 1.1" look means brightening midtones. In SVG component-transfer
+  // terms that is an exponent of 1 / gamma.
+  const computeGammaExponent = (gamma) => {
+    const safeGamma = Number.isFinite(gamma) && gamma > 0 ? gamma : 1;
+    return Number((1 / safeGamma).toFixed(4));
+  };
+
+  const updateGammaForRecord = (record, gamma) => {
+    if (!record?.gammaFuncs?.length) return;
+    const exponent = String(computeGammaExponent(gamma));
+    record.gammaFuncs.forEach((func) => {
+      if (func.getAttribute('exponent') !== exponent) {
+        func.setAttribute('exponent', exponent);
+      }
+    });
+  };
 
   const ensureFilterForRoot = (root) => {
     if (!root) return null;
@@ -51,7 +68,19 @@
     conv.setAttribute('kernelMatrix', computeKernelString(getState()?.settings?.sharpen ?? 0.3));
     conv.setAttribute('edgeMode', 'duplicate');
 
+    const transfer = document.createElementNS(svgNS, 'feComponentTransfer');
+    const gammaFuncs = ['R', 'G', 'B'].map((channel) => {
+      const func = document.createElementNS(svgNS, `feFunc${channel}`);
+      func.setAttribute('type', 'gamma');
+      func.setAttribute('amplitude', '1');
+      func.setAttribute('exponent', String(computeGammaExponent(getState()?.settings?.gamma ?? 1)));
+      func.setAttribute('offset', '0');
+      transfer.appendChild(func);
+      return func;
+    });
+
     filter.appendChild(conv);
+    filter.appendChild(transfer);
     defsNode.appendChild(filter);
     svg.appendChild(defsNode);
 
@@ -65,7 +94,7 @@
       try { (document.body || document.documentElement).appendChild(svg); } catch (_) {}
     }
 
-    const record = { filterId, filterNode: svg, convolveNode: conv };
+    const record = { filterId, filterNode: svg, convolveNode: conv, gammaFuncs };
     perRootFilters.set(root, record);
     return record;
   };
@@ -108,7 +137,10 @@
       if (settings.brightness !== 1) parts.push(`brightness(${Number(settings.brightness.toFixed(2))})`);
       if (settings.contrast !== 1) parts.push(`contrast(${Number(settings.contrast.toFixed(2))})`);
       if (settings.saturation !== 1) parts.push(`saturate(${Number(settings.saturation.toFixed(2))})`);
-      if (settings.gamma !== 1) {
+      // SVG mode applies gamma through feComponentTransfer inside the filter.
+      // Compatibility/no-SVG mode keeps a CSS brightness approximation so the
+      // control still has an effect there.
+      if (!includeSvg && settings.gamma !== 1) {
         const gammaAdjust = Math.pow(settings.gamma, 0.5);
         parts.push(`brightness(${Number(gammaAdjust.toFixed(2))})`);
       }
@@ -117,12 +149,13 @@
 
     let newFilter = buildFilterString(Boolean(allowSvg));
 
-    if (allowSvg && record?.convolveNode) {
+    if (allowSvg && record) {
       const ks = computeKernelString(settings.sharpen);
       // Check actual attribute to ensure Shadow DOM filters are updated
-      if (record.convolveNode.getAttribute('kernelMatrix') !== ks) {
+      if (record.convolveNode && record.convolveNode.getAttribute('kernelMatrix') !== ks) {
         try { record.convolveNode.setAttribute('kernelMatrix', ks); } catch (_) {}
       }
+      updateGammaForRecord(record, settings.gamma);
     }
 
     const token = `${settings.sharpen.toFixed(4)}|${settings.contrast.toFixed(4)}|${settings.saturation.toFixed(4)}|${settings.brightness.toFixed(4)}|${settings.gamma.toFixed(4)}|${compatibilityMode}`;
@@ -161,27 +194,54 @@
     delete video.dataset.videoEnhancerNoSvg;
   };
 
+  // Fallback used only if the overlay module has not initialized yet.
+  const pickFallbackPrimaryVideo = () => {
+    const minArea = VN.consts.MIN_TARGET_WIDTH * VN.consts.MIN_TARGET_HEIGHT;
+    const candidates = [];
+
+    VN.collectVideos().forEach((video) => {
+      const rect = video.getBoundingClientRect();
+      const area = rect.width * rect.height;
+      if (area < minArea) return;
+      if (rect.right <= 0 || rect.bottom <= 0 || rect.left >= window.innerWidth || rect.top >= window.innerHeight) return;
+
+      const style = window.getComputedStyle(video);
+      if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return;
+
+      candidates.push({
+        video,
+        area,
+        playing: Boolean(video.currentTime > 0 && !video.paused && !video.ended && video.readyState > 2)
+      });
+    });
+
+    candidates.sort((a, b) => Number(b.playing) - Number(a.playing) || b.area - a.area);
+    return candidates[0]?.video || null;
+  };
+
+  // Keep the filter on the same primary video the overlay controls. Using the
+  // overlay's selector also handles YouTube's player-only end screen, where the
+  // correct behavior is to stop filtering because there is no video element.
+  const getPrimaryVideoForFilter = () => {
+    if (typeof VN.overlay?.getPrimaryVideo === 'function') {
+      const best = VN.overlay.getPrimaryVideo();
+      return best?.video instanceof HTMLVideoElement ? best.video : null;
+    }
+    return pickFallbackPrimaryVideo();
+  };
+
   VN.updateAllVideos = (settings) => {
     const videos = VN.collectVideos();
     if (!settings) { videos.forEach(removeFilterFromVideo); return; }
 
-    const minArea = consts.MIN_TARGET_WIDTH * consts.MIN_TARGET_HEIGHT;
-    const eligible = videos.filter((v)=>{
-      const r = v.getBoundingClientRect();
-      return (r.width * r.height) >= minArea;
-    });
-    
-    // Use a copy for sorting to avoid side effects
-    const target = eligible.length 
-      ? new Set(eligible) 
-      : new Set([...videos].sort((a,b)=>{
-          const ra=a.getBoundingClientRect(), rb=b.getBoundingClientRect(); 
-          return (rb.width*rb.height)-(ra.width*ra.height);
-        }).slice(0, 1).filter(Boolean));
+    const target = getPrimaryVideoForFilter();
 
-    videos.forEach((v)=>{ 
-      if (target.size===0 || target.has(v)) applyFilterToVideo(v, settings); 
-      else if (v.dataset[ids.DATA_APPLIED_KEY]==='true') removeFilterFromVideo(v); 
+    videos.forEach((video) => {
+      if (video === target) {
+        applyFilterToVideo(video, settings);
+      } else if (video.dataset[ids.DATA_APPLIED_KEY] === 'true') {
+        removeFilterFromVideo(video);
+      }
     });
   };
 

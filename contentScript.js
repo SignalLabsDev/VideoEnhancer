@@ -94,6 +94,12 @@
 
   document.addEventListener('visibilitychange', handleVisibilityChange);
 
+  // Re-evaluate the primary video promptly when playback state changes, so the
+  // filter stays on the video the overlay is controlling.
+  ['play', 'pause', 'ended'].forEach((eventName) => {
+    document.addEventListener(eventName, () => VN.scheduleRefresh(`video-${eventName}`), true);
+  });
+
   const init = async () => {
     await VN.loadPersistedState();
     VN.ensureFilter();

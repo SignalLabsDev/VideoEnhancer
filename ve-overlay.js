@@ -525,6 +525,7 @@
   overlayApi.ensure = ensureOverlay;
   overlayApi.updateState = updateButtonStyles;
   overlayApi.requestPosition = requestPosition;
+  overlayApi.getPrimaryVideo = getPrimaryVideo;
   
   // Called when overlayEnabled setting changes
   overlayApi.refresh = () => {
