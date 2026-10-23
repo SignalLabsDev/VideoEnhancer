@@ -128,7 +128,8 @@
     const originalFilter = video.dataset[ids.DATA_ORIGINAL_FILTER_KEY];
 
     const compatibilityMode = state?.compatibilityMode ?? false;
-    const allowSvg = !compatibilityMode && record?.filterId && video.dataset.videoEnhancerNoSvg !== '1';
+    const needsSvgFilter = settings.sharpen !== 0 || settings.gamma !== 1;
+    const allowSvg = !compatibilityMode && needsSvgFilter && record?.filterId && video.dataset.videoEnhancerNoSvg !== '1';
 
     const buildFilterString = (includeSvg) => {
       const parts = [];
@@ -194,8 +195,9 @@
     delete video.dataset.videoEnhancerNoSvg;
   };
 
-  // Fallback used only if the overlay module has not initialized yet.
-  const pickFallbackPrimaryVideo = () => {
+  // Fallback used if the overlay module has not initialized yet, or if no
+  // overlay-selected video is currently in the viewport.
+  const pickFallbackPrimaryVideo = (requireVisible = true) => {
     const minArea = VN.consts.MIN_TARGET_WIDTH * VN.consts.MIN_TARGET_HEIGHT;
     const candidates = [];
 
@@ -203,7 +205,8 @@
       const rect = video.getBoundingClientRect();
       const area = rect.width * rect.height;
       if (area < minArea) return;
-      if (rect.right <= 0 || rect.bottom <= 0 || rect.left >= window.innerWidth || rect.top >= window.innerHeight) return;
+      if (requireVisible &&
+          (rect.right <= 0 || rect.bottom <= 0 || rect.left >= window.innerWidth || rect.top >= window.innerHeight)) return;
 
       const style = window.getComputedStyle(video);
       if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return;
@@ -225,9 +228,13 @@
   const getPrimaryVideoForFilter = () => {
     if (typeof VN.overlay?.getPrimaryVideo === 'function') {
       const best = VN.overlay.getPrimaryVideo();
-      return best?.video instanceof HTMLVideoElement ? best.video : null;
+      if (best) return best.video instanceof HTMLVideoElement ? best.video : null;
+      // The overlay only considers videos intersecting the viewport. Keep an
+      // already-eligible offscreen video filtered rather than dropping it on a
+      // DOM mutation while the user has scrolled past it.
+      return pickFallbackPrimaryVideo(false);
     }
-    return pickFallbackPrimaryVideo();
+    return pickFallbackPrimaryVideo(true);
   };
 
   VN.updateAllVideos = (settings) => {

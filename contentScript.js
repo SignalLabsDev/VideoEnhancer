@@ -75,6 +75,11 @@
     });
   };
 
+  // Track initialization state
+  let initPromise = null;
+  let isInitialized = false;
+  let lastToggleTime = 0;
+
   let visibilitySuspended = false;
   const handleVisibilityChange = () => {
     const state = getState();
@@ -103,6 +108,20 @@
     }, true);
   });
 
+  // Scrolling can reveal a different primary video. Debounce the filter
+  // refresh so a scan runs after scrolling settles rather than every frame.
+  let viewportRefreshTimer = null;
+  const handleViewportChange = () => {
+    if (!isInitialized) return;
+    if (viewportRefreshTimer) clearTimeout(viewportRefreshTimer);
+    viewportRefreshTimer = window.setTimeout(() => {
+      viewportRefreshTimer = null;
+      VN.scheduleRefresh('viewport-change');
+    }, 200);
+  };
+  window.addEventListener('scroll', handleViewportChange, true);
+  window.addEventListener('resize', handleViewportChange);
+
   const init = async () => {
     await VN.loadPersistedState();
     VN.ensureFilter();
@@ -120,11 +139,6 @@
     initMutationObserver();
     VN.refreshEffect();
   };
-
-  // Track initialization state
-  let initPromise = null;
-  let isInitialized = false;
-  let lastToggleTime = 0;
 
   // Listen for messages from popup/background
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {

@@ -552,8 +552,8 @@
     const state = getState();
     if (!state) return;
     
-    applyPanelPosition();
     updatePanelVisibility();
+    applyPanelPosition();
     setButtonState(mainToggleButton, state.enabled, 'ON', 'OFF');
     
     if (compatibilityToggleInput) {
@@ -717,6 +717,7 @@
     setPresetDropdownOpen(false);
     syncUI();
     setPresetStatus(`Applied "${preset.name}".`);
+    presetInput?.focus();
     VN.schedulePersist?.('preset-apply');
     if (state.enabled) VN.scheduleRefresh?.('preset-apply');
   };
