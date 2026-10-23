@@ -132,8 +132,7 @@
     youtubePlayerElement = null;
     if (!overlayContainer) return;
     overlayContainer.style.visibility = 'hidden';
-    overlayContainer.style.opacity = '0';
-    overlayContainer.style.pointerEvents = 'none';
+    setOverlayInteractive(false);
   };
 
   // Show the overlay (just visibility, opacity controlled by hover)
@@ -200,6 +199,19 @@
     return best;
   }
 
+  // Opacity alone leaves buttons keyboard-focusable while they are invisible.
+  // Keep the container out of the tab order and accessibility tree when hidden.
+  const setOverlayInteractive = (visible) => {
+    if (!overlayContainer) return;
+    overlayContainer.style.opacity = visible ? '1' : '0';
+    overlayContainer.style.pointerEvents = visible ? 'auto' : 'none';
+    overlayContainer.setAttribute('aria-hidden', String(!visible));
+    try { overlayContainer.inert = !visible; } catch (_) {}
+    [toggleButton, settingsButton].forEach((button) => {
+      if (button) button.tabIndex = visible ? 0 : -1;
+    });
+  };
+
   // Update hover state (show/hide based on mouse position over video)
   const updateHoverState = () => {
     if (!overlayContainer || !shouldShowOverlay() || !lastVideoRect) {
@@ -216,8 +228,7 @@
       !youtubePlayerElement.classList.contains('ytp-autohide');
     const visible = inside && youtubeControlsVisible &&
       !(isFullscreen() && !youtubePlayerElement && overlayIdleHidden);
-    overlayContainer.style.opacity = visible ? '1' : '0';
-    overlayContainer.style.pointerEvents = visible ? 'auto' : 'none';
+    setOverlayInteractive(visible);
   };
 
   // Position the overlay relative to the primary video
@@ -267,6 +278,7 @@
     // Toggle button reflects filter enabled state
     const isEnabled = Boolean(getState()?.enabled);
     applyButtonStyle(toggleButton, isEnabled ? ACTIVE_STYLE : DISABLED_STYLE);
+    toggleButton.setAttribute('aria-pressed', String(isEnabled));
   };
 
   // Create the overlay DOM elements
@@ -275,6 +287,8 @@
 
     overlayContainer = document.createElement('div');
     overlayContainer.id = 'video-enhancer-inline-toggle';
+    overlayContainer.setAttribute('role', 'group');
+    overlayContainer.setAttribute('aria-label', 'Video Enhancer quick controls');
     overlayContainer.style.cssText = `
       position: fixed !important;
       z-index: 2147483646 !important;
@@ -324,6 +338,9 @@
     toggleButton = document.createElement('button');
     toggleButton.type = 'button';
     toggleButton.style.cssText = btnStyle;
+    toggleButton.setAttribute('aria-label', 'Toggle video enhancement');
+    toggleButton.setAttribute('aria-pressed', 'false');
+    toggleButton.title = 'Toggle video enhancement';
     toggleButton.appendChild(createIconSpan('⏻', { bold: true }));
     toggleButton.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -356,6 +373,8 @@
     settingsButton = document.createElement('button');
     settingsButton.type = 'button';
     settingsButton.style.cssText = btnStyle;
+    settingsButton.setAttribute('aria-label', 'Open Video Enhancer settings');
+    settingsButton.title = 'Open Video Enhancer settings';
     settingsButton.appendChild(createIconSpan('⚙', { large: true }));
     settingsButton.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -374,6 +393,7 @@
     });
 
     overlayContainer.append(toggleButton, settingsButton);
+    setOverlayInteractive(false);
     (document.body || document.documentElement).appendChild(overlayContainer);
   };
 

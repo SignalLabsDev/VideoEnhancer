@@ -183,6 +183,7 @@
   const setButtonState = (button, isOn, onLabel, offLabel) => {
     if (!button) return;
     button.textContent = isOn ? onLabel : offLabel;
+    button.setAttribute('aria-pressed', String(Boolean(isOn)));
     button.classList.toggle('video-enhancer-button-off', !isOn);
     button.classList.toggle('video-enhancer-button-on', isOn);
   };
@@ -247,7 +248,7 @@
     });
   };
 
-  const finishSliderValueEdit = (session, shouldCommit) => {
+  const finishSliderValueEdit = (session, shouldCommit, restoreFocus = false) => {
     if (activeSliderValueEditor !== session) return;
     activeSliderValueEditor = null;
 
@@ -266,6 +267,7 @@
 
     syncSliders();
     session.wrapper.replaceWith(session.label);
+    if (restoreFocus) session.label.focus();
   };
 
   const openSliderValueEditor = (key) => {
@@ -313,10 +315,10 @@
     editor.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') {
         event.preventDefault();
-        editor.blur();
+        finishSliderValueEdit(session, true, true);
       } else if (event.key === 'Escape') {
         event.preventDefault();
-        finishSliderValueEdit(session, false);
+        finishSliderValueEdit(session, false, true);
       }
     });
     editor.addEventListener('blur', () => finishSliderValueEdit(session, true), { once: true });
