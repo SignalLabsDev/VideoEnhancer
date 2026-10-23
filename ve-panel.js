@@ -75,11 +75,7 @@
   if (!isTopFrame) {
     panelApi.ensure = () => {};
     panelApi.syncUI = () => {};
-    panelApi.toggle = () => {
-      try {
-        window.top.postMessage({ __videoEnhancer: true, type: 'VIDEO_ENHANCER_TOGGLE_PANEL' }, '*');
-      } catch (_) {}
-    };
+    panelApi.toggle = () => VN.requestPanelToggleFromFrame?.();
     panelApi.setVisible = panelApi.toggle;
     panelApi.broadcastState = () => {};
 
@@ -1178,16 +1174,6 @@
       }
     }, 2000);
   }
-
-  // Listen for toggle messages from iframes or background
-  window.addEventListener('message', (event) => {
-    const data = event?.data;
-    if (!data || data.__videoEnhancer !== true) return;
-
-    if (data.type === 'VIDEO_ENHANCER_TOGGLE_PANEL') {
-      panelApi.toggle();
-    }
-  });
 
   VN.panel = panelApi;
 })();

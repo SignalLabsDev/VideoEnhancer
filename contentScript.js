@@ -133,9 +133,7 @@
         try { isTopFrame = window.top === window; } catch (_) { isTopFrame = true; }
 
         if (!isTopFrame) {
-          try {
-            window.top.postMessage({ __videoEnhancer: true, type: 'VIDEO_ENHANCER_TOGGLE_PANEL' }, '*');
-          } catch (_) {}
+          VN.requestPanelToggleFromFrame?.();
           return;
         }
 

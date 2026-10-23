@@ -196,6 +196,19 @@
   // Per-tab state: Each tab loads from storage on init but doesn't sync with other tabs.
   // This is simpler and more reliable than cross-tab synchronization.
 
+  // Iframe content scripts cannot safely use window.postMessage to ask the top
+  // frame to toggle the panel: any page script can forge that message. Relay the
+  // request through the extension service worker instead, which only accepts
+  // messages from this extension.
+  VN.requestPanelToggleFromFrame = () => {
+    if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) return;
+    try {
+      chrome.runtime.sendMessage({ type: 'VIDEO_ENHANCER_TOGGLE_PANEL_FROM_FRAME' }, () => {
+        void chrome.runtime.lastError;
+      });
+    } catch (_) {}
+  };
+
   VN.loadPersistedState = () => new Promise((resolve) => {
     if (!chrome?.storage?.local) { resolve(); return; }
     try {

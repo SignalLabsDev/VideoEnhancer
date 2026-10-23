@@ -43,6 +43,24 @@ const ensureContentScriptInjected = async (tabId) => {
   }
 };
 
+// Iframe overlays and content scripts ask the worker to toggle the top-frame
+// panel. Use runtime messaging instead of window.postMessage so page scripts
+// cannot forge the request.
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type !== 'VIDEO_ENHANCER_TOGGLE_PANEL_FROM_FRAME') return;
+
+  const tabId = sender.tab?.id;
+  if (typeof tabId !== 'number') {
+    sendResponse({ ok: false, error: 'No sender tab' });
+    return;
+  }
+
+  sendTogglePanelMessage(tabId).then((result) => {
+    sendResponse({ ok: result.ok, error: result.error?.message || null });
+  });
+  return true;
+});
+
 chrome.action.onClicked.addListener((tab) => {
   if (!tab || tab.id === undefined) return;
 

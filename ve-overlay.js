@@ -381,10 +381,11 @@
       e.preventDefault();
       scheduleOverlayIdleHide();
       
-      // If in iframe, message parent; otherwise toggle directly
+      // If in an iframe, ask the extension service worker to relay the toggle
+      // to the top frame; otherwise toggle directly.
       try {
         if (window.top !== window) {
-          window.top.postMessage({ __videoEnhancer: true, type: 'VIDEO_ENHANCER_TOGGLE_PANEL' }, '*');
+          VN.requestPanelToggleFromFrame?.();
           return;
         }
       } catch (_) {}
