@@ -13,6 +13,10 @@ Open source and lightweight video enhancer for Twitch, YouTube, and Kick. Give s
 - **Responsive to SPA navigation** – the overlay follows you across watch pages and live channels without reloads.
 - **GPU-friendly sharpening** – blends CSS filters with an SVG-based sharpen pass for crisp playback on modern hardware.
 
+## Downloads
+
+Download the latest packaged extension from [GitHub Releases](https://github.com/SignalLabsDev/VideoEnhancer/releases/latest).
+
 ## How It Works
 
 1. Pin the extension and click the toolbar icon whenever you want to open or hide the control panel.
