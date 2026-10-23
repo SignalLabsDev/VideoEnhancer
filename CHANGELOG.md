@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.1 – 2026-10-23
+
+### Fixed
+
+- Keep inline overlay controls visible and correctly positioned over YouTube's end screen when its controls are visible.
+
 ## 2.1.0 – 2026-10-23
 
 ### Added

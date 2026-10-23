@@ -68,8 +68,10 @@
     if (overlayContainer && lastVideoRect) updateHoverState();
   };
 
-  const watchYoutubePlayer = (video) => {
-    const player = video?.closest('.html5-video-player') || null;
+  const watchYoutubePlayer = (videoOrPlayer) => {
+    const player = videoOrPlayer?.matches?.('.html5-video-player')
+      ? videoOrPlayer
+      : videoOrPlayer?.closest?.('.html5-video-player') || null;
     if (player === youtubePlayerElement) return;
 
     if (youtubeControlsObserver) {
@@ -166,20 +168,30 @@
     let bestArea = 0;
     let bestIsPlaying = false;
 
-    VN.collectVideos().forEach((v) => {
-      const rect = v.getBoundingClientRect();
+    const candidates = VN.collectVideos().map((video) => {
+      const player = video.closest('.html5-video-player');
+      return { video, player, target: player || video };
+    });
+    const knownPlayers = new Set(candidates.map((candidate) => candidate.player).filter(Boolean));
+    document.querySelectorAll('.html5-video-player').forEach((player) => {
+      if (knownPlayers.has(player)) return;
+      candidates.push({ video: player.querySelector('video'), player, target: player });
+    });
+
+    candidates.forEach(({ video, player, target }) => {
+      const rect = target.getBoundingClientRect();
       if (!rectIntersectsViewport(rect)) return;
       if ((rect.width * rect.height) < minArea) return;
       
-      const cs = window.getComputedStyle(v);
+      const cs = window.getComputedStyle(target);
       if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) === 0) return;
       
       const area = rect.width * rect.height;
-      const isPlaying = !!(v.currentTime > 0 && !v.paused && !v.ended && v.readyState > 2);
+      const isPlaying = !!(video && video.currentTime > 0 && !video.paused && !video.ended && video.readyState > 2);
 
       // Prioritize playing videos, then by area
       if (!best || (isPlaying && !bestIsPlaying) || (isPlaying === bestIsPlaying && area > bestArea)) {
-        best = { video: v, rect };
+        best = { video, player, rect };
         bestArea = area;
         bestIsPlaying = isPlaying;
       }
@@ -226,7 +238,7 @@
       return;
     }
 
-    watchYoutubePlayer(best.video);
+    watchYoutubePlayer(best.player || best.video);
     handleFullscreenMode();
     lastVideoRect = best.rect;
     const margin = 8;
@@ -474,6 +486,7 @@
     window.addEventListener('resize', requestPosition);
     window.addEventListener('mousemove', onMouseMove, true);
     window.addEventListener('keydown', onKeyDown, true);
+    document.addEventListener('ended', requestPosition, true);
     
     const fsEvents = ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'];
     fsEvents.forEach(evt => document.addEventListener(evt, requestPosition, true));
