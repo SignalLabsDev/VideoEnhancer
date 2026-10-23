@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased (review-fixes)
+
+### Fixed
+
+- Keep the control panel and inline overlay inside the fullscreen element, and reposition the overlay immediately on fullscreen changes.
+- Apply filters only to the primary video, avoiding GPU work on offscreen previews and secondary players.
+- Use a real per-channel gamma transfer in SVG filter mode, with a CSS fallback in compatibility mode.
+- Restore keyboard access to the Settings tab and visible focus indicators across the panel.
+- Make preset overwrite, deletion, and the 50-preset limit explicit instead of silent.
+- Keep the panel within the viewport with scrolling for short screens and clamped restored positions.
+- Remove invisible overlay controls from the tab order, add accessible names and pressed state, and restore focus after keyboard slider editing.
+- Relay iframe panel toggle requests through the extension service worker instead of accepting page-forgeable window messages.
+
 ## 2.1.1 – 2026-10-23
 
 ### Fixed
