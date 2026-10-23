@@ -141,6 +141,31 @@
     }
   };
 
+  // Fullscreen only renders the fullscreen element and its descendants. Move the
+  // panel into that subtree so it stays visible when opened from a fullscreen video.
+  const getFullscreenElement = () => document.fullscreenElement || document.webkitFullscreenElement ||
+    document.mozFullScreenElement || document.msFullscreenElement || null;
+
+  const getPanelHost = () => {
+    const fullscreenElement = getFullscreenElement();
+    if (fullscreenElement && !(fullscreenElement instanceof HTMLVideoElement)) {
+      return fullscreenElement;
+    }
+    return document.body || document.documentElement;
+  };
+
+  const ensurePanelHost = () => {
+    if (!panelNode) return;
+    const host = getPanelHost();
+    if (panelNode.parentElement === host) return;
+
+    try {
+      host.appendChild(panelNode);
+    } catch (_) {
+      try { (document.body || document.documentElement).appendChild(panelNode); } catch (_) {}
+    }
+  };
+
   const updatePanelVisibility = () => {
     if (!panelNode) return;
     const state = getState();
@@ -960,7 +985,7 @@
       </div>
     `;
 
-    document.documentElement.appendChild(panelNode);
+    ensurePanelHost();
   };
 
   // =========================================================================
@@ -979,8 +1004,9 @@
       panelNode = document.getElementById('video-enhancer-panel');
     }
 
-    // If panel exists and is connected, ensure it's wired
+    // If panel exists and is connected, ensure it's wired and hosted correctly
     if (panelNode && panelNode.isConnected) {
+      ensurePanelHost();
       wirePanelNode();
       return;
     }
@@ -1065,6 +1091,13 @@
   };
 
   installSpaHooks();
+
+  // Keep the panel in the active fullscreen subtree (and move it back on exit).
+  const fullscreenEvents = ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'];
+  fullscreenEvents.forEach((evt) => document.addEventListener(evt, () => {
+    ensurePanelHost();
+    if (getState()?.panelVisible) applyPanelPosition();
+  }, true));
 
   // Watchdog to recover panel if DOM is removed (e.g., by page scripts)
   if (!panelWatchdog) {

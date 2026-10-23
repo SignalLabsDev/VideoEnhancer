@@ -488,8 +488,11 @@
     window.addEventListener('keydown', onKeyDown, true);
     document.addEventListener('ended', requestPosition, true);
     
+    // Fullscreen changes need the full ensure path: it reparents the overlay into
+    // the fullscreen element before positioning it. requestPosition alone would
+    // leave the overlay outside the top layer until the 2s watchdog runs.
     const fsEvents = ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'];
-    fsEvents.forEach(evt => document.addEventListener(evt, requestPosition, true));
+    fsEvents.forEach(evt => document.addEventListener(evt, ensureOverlay, true));
   };
 
   // Initialize the overlay system
