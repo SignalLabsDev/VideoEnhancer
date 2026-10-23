@@ -129,8 +129,21 @@
     if (!state) return;
 
     if (state.panelPosition.useCustom && state.panelPosition.left !== null) {
-      panelNode.style.top = `${state.panelPosition.top}px`;
-      panelNode.style.left = `${state.panelPosition.left}px`;
+      const hasSize = panelNode.offsetWidth > 0 && panelNode.offsetHeight > 0;
+      const maxLeft = hasSize ? Math.max(16, window.innerWidth - panelNode.offsetWidth - 16) : state.panelPosition.left;
+      const maxTop = hasSize ? Math.max(16, window.innerHeight - panelNode.offsetHeight - 16) : state.panelPosition.top;
+      const nextTop = clamp(state.panelPosition.top, 16, maxTop);
+      const nextLeft = clamp(state.panelPosition.left, 16, maxLeft);
+
+      // A saved position can be off-screen after a monitor or window-size change.
+      if (nextTop !== state.panelPosition.top || nextLeft !== state.panelPosition.left) {
+        state.panelPosition.top = nextTop;
+        state.panelPosition.left = nextLeft;
+        VN.schedulePersist?.('panel-position-clamp');
+      }
+
+      panelNode.style.top = `${nextTop}px`;
+      panelNode.style.left = `${nextLeft}px`;
       panelNode.style.right = 'auto';
     } else {
       panelNode.style.top = '80px';
@@ -356,7 +369,7 @@
     const state = getState();
     const name = presetInput?.value.trim() || '';
     const existing = name
-      ? state?.presets.find((preset) => preset.name.toLocaleLowerCase() === name.toLocaleLowerCase())
+      ? state?.presets?.find((preset) => preset.name.toLocaleLowerCase() === name.toLocaleLowerCase())
       : null;
     const atLimit = !existing && (state?.presets?.length || 0) >= 50;
 
@@ -1161,6 +1174,10 @@
     ensurePanelHost();
     if (getState()?.panelVisible) applyPanelPosition();
   }, true));
+
+  window.addEventListener('resize', () => {
+    if (getState()?.panelVisible) applyPanelPosition();
+  });
 
   // Watchdog to recover panel if DOM is removed (e.g., by page scripts)
   if (!panelWatchdog) {

@@ -512,8 +512,13 @@
     // Fullscreen changes need the full ensure path: it reparents the overlay into
     // the fullscreen element before positioning it. requestPosition alone would
     // leave the overlay outside the top layer until the 2s watchdog runs.
+    // Re-run the filter selection too; the fullscreen video is often newly primary.
+    const onFullscreenChange = () => {
+      ensureOverlay();
+      VN.scheduleRefresh?.('fullscreen-change');
+    };
     const fsEvents = ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'];
-    fsEvents.forEach(evt => document.addEventListener(evt, ensureOverlay, true));
+    fsEvents.forEach(evt => document.addEventListener(evt, onFullscreenChange, true));
   };
 
   // Initialize the overlay system
