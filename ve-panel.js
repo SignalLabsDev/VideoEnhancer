@@ -24,6 +24,7 @@
   let presetImportButton = null;
   let presetImportFileInput = null;
   let presetIoStatus = null;
+  let presetStatus = null;
   let presetFilterActive = false;
   let activeSliderValueEditor = null;
   
@@ -114,6 +115,7 @@
     presetImportButton = null;
     presetImportFileInput = null;
     presetIoStatus = null;
+    presetStatus = null;
     presetFilterActive = false;
     activeSliderValueEditor = null;
     wired = false;
@@ -343,10 +345,30 @@
   const CHEVRON_ICON = '<svg width="10" height="6" viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const DELETE_ICON = '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 2l6 6M8 2l-6 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
 
-  // Save is disabled until there is a name to save under
+  const setPresetStatus = (message, isError = false) => {
+    if (!presetStatus) return;
+    presetStatus.textContent = message;
+    presetStatus.classList.toggle('video-enhancer-preset-status-error', isError);
+  };
+
+  // Save is disabled until there is a name, and at the 50-preset limit it only
+  // allows updating an existing preset.
   const updateSaveButton = () => {
     if (!savePresetButton) return;
-    savePresetButton.disabled = !presetInput?.value.trim();
+    const state = getState();
+    const name = presetInput?.value.trim() || '';
+    const existing = name
+      ? state?.presets.find((preset) => preset.name.toLocaleLowerCase() === name.toLocaleLowerCase())
+      : null;
+    const atLimit = !existing && (state?.presets?.length || 0) >= 50;
+
+    savePresetButton.disabled = !name || atLimit;
+    savePresetButton.textContent = existing ? 'Update' : 'Save';
+    savePresetButton.title = atLimit
+      ? 'Preset limit reached (50). Delete one before saving a new preset.'
+      : existing
+        ? 'Update this preset with the current settings'
+        : 'Save the current settings as a new preset';
   };
 
   const SETTINGS_EXPORT_FORMAT = 'video-enhancer-settings';
@@ -637,12 +659,17 @@
     const name = presetInput?.value.trim().slice(0, 40) || '';
     if (!state) return;
     if (!name) {
+      setPresetStatus('Enter a preset name first.', true);
       presetInput?.focus();
       return;
     }
 
     const existing = state.presets.find((preset) => preset.name.toLocaleLowerCase() === name.toLocaleLowerCase());
-    if (!existing && state.presets.length >= 50) return;
+    if (!existing && state.presets.length >= 50) {
+      setPresetStatus('Preset limit reached (50). Delete one before saving a new preset.', true);
+      updateSaveButton();
+      return;
+    }
 
     const settings = VN.normalizeSettings(state.settings, VN.DEFAULT_SETTINGS);
     const preset = existing || {
@@ -657,6 +684,7 @@
     presetFilterActive = false;
     updatePresetOptions();
     setPresetDropdownOpen(false);
+    setPresetStatus(`${existing ? 'Updated' : 'Saved'} "${name}".`);
     VN.schedulePersist?.('preset-save');
     if (savePresetButton) {
       savePresetButton.classList.add('video-enhancer-saved');
@@ -677,6 +705,7 @@
     updatePresetOptions();
     setPresetDropdownOpen(false);
     syncUI();
+    setPresetStatus(`Applied "${preset.name}".`);
     VN.schedulePersist?.('preset-apply');
     if (state.enabled) VN.scheduleRefresh?.('preset-apply');
   };
@@ -685,13 +714,20 @@
     const state = getState();
     if (!state || !presetId) return;
     const preset = state.presets.find((item) => item.id === presetId);
+    if (!preset) return;
+
+    try {
+      if (!window.confirm(`Delete preset "${preset.name}"?`)) return;
+    } catch (_) {}
+
     state.presets = state.presets.filter((item) => item.id !== presetId);
-    if (preset && presetInput?.value.trim().toLocaleLowerCase() === preset.name.toLocaleLowerCase()) {
+    if (presetInput?.value.trim().toLocaleLowerCase() === preset.name.toLocaleLowerCase()) {
       presetInput.value = '';
       presetFilterActive = false;
     }
     updatePresetOptions();
     setPresetDropdownOpen(keepDropdownOpen);
+    setPresetStatus(`Deleted "${preset.name}".`);
     if (keepDropdownOpen) presetInput?.focus();
     VN.schedulePersist?.('preset-delete');
   };
@@ -756,6 +792,7 @@
     presetImportButton = panelNode.querySelector('#video-enhancer-import-settings');
     presetImportFileInput = panelNode.querySelector('#video-enhancer-import-file');
     presetIoStatus = panelNode.querySelector('#video-enhancer-preset-io-status');
+    presetStatus = panelNode.querySelector('#video-enhancer-preset-status');
 
     sliderInputs.sharpen = panelNode.querySelector('#video-enhancer-custom-sharpen');
     sliderInputs.contrast = panelNode.querySelector('#video-enhancer-custom-contrast');
@@ -868,6 +905,7 @@
     // Typing only names a preset; the list opens from the chevron (filtering if already open)
     presetInput?.addEventListener('input', () => {
       presetFilterActive = true;
+      setPresetStatus('');
       updatePresetOptions();
     });
     // Keep focus in the input while clicking the chevron or menu rows
@@ -949,6 +987,7 @@
             </div>
             <button id="video-enhancer-save-preset" type="button" class="video-enhancer-secondary-button video-enhancer-preset-save" disabled>Save</button>
           </div>
+          <div id="video-enhancer-preset-status" class="video-enhancer-preset-status" role="status" aria-live="polite"></div>
         </div>
         <div class="video-enhancer-slider-group">
           <div class="video-enhancer-slider-label">

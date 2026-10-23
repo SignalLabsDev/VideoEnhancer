@@ -13,6 +13,12 @@
   backdrop-filter: blur(22px);
   border: 1px solid rgba(255, 255, 255, 0.08);
   box-sizing: border-box;
+  max-height: calc(100vh - 96px);
+  max-height: calc(100dvh - 96px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
 
@@ -191,6 +197,18 @@
 /* Presets: [ name input ......... chevron ] [Save] */
 .video-enhancer-preset-tools {
   margin: 0 0 16px;
+}
+
+.video-enhancer-preset-status {
+  min-height: 13px;
+  margin-top: 6px;
+  color: rgba(245, 247, 250, 0.58);
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.video-enhancer-preset-status.video-enhancer-preset-status-error {
+  color: #ff9b9b;
 }
 
 .video-enhancer-preset-title {
@@ -652,8 +670,6 @@
 
 @media (max-width: 900px) {
   #video-enhancer-panel {
-    top: auto;
-    bottom: 20px;
     right: 12px;
   }
 }
