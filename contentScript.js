@@ -11,44 +11,82 @@
   const SITE_VARIANT = (() => {
     try {
       const host = (location.hostname || '').toLowerCase();
-      if (host.includes('youtube')) return 'youtube';
-      if (host.includes('twitch')) return 'twitch';
-      if (host.includes('kick')) return 'kick';
+      const matchesHost = (domain) => host === domain || host.endsWith(`.${domain}`);
+      if (matchesHost('youtube.com') || matchesHost('youtube-nocookie.com') || host === 'youtu.be') return 'youtube';
+      if (matchesHost('twitch.tv')) return 'twitch';
+      if (matchesHost('kick.com')) return 'kick';
     } catch (_) {}
     return 'default';
   })();
 
+  // Track initialization state
+  let initPromise = null;
+  let isInitialized = false;
+  let lastToggleTime = 0;
+  let mutationRefreshTimer = null;
+
+  // A mutation storm (chat, player UI) should not trigger one full DOM scan per
+  // frame. Coalesce mutation-driven refreshes; direct events (play, scroll,
+  // fullscreen) still refresh immediately.
+  const MUTATION_REFRESH_DELAY_MS = 150;
+  const scheduleMutationRefresh = (reason) => {
+    if (mutationRefreshTimer) return;
+    mutationRefreshTimer = window.setTimeout(() => {
+      mutationRefreshTimer = null;
+      if (!isInitialized) return;
+      VN.scheduleRefresh(reason);
+    }, MUTATION_REFRESH_DELAY_MS);
+  };
+
   // Mutation Observer logic
   const processNode = (node) => {
     if (node instanceof HTMLVideoElement) {
-      VN.scheduleRefresh('mutation:video');
+      scheduleMutationRefresh('mutation:video');
       VN.overlay?.requestPosition?.();
       return;
     }
 
-    if (node instanceof HTMLElement) {
-      const containsVideo = node.tagName === 'VIDEO' || node.querySelector('video');
-      const ytActionsAppeared = (
-        node.id === 'top-level-buttons-computed' ||
-        node.id === 'actions' ||
-        node.id === 'actions-inner' ||
-        node.querySelector?.('#top-level-buttons-computed, #actions, #actions-inner, ytd-segmented-like-dislike-button-renderer')
-      );
-      if (containsVideo) {
-        VN.scheduleRefresh('mutation:container');
-        VN.overlay?.requestPosition?.();
-      } else if (SITE_VARIANT === 'youtube' && ytActionsAppeared) {
-        VN.overlay?.requestPosition?.();
-      }
+    if (!(node instanceof HTMLElement)) return;
+
+    const containsVideo = node.childElementCount > 0 && node.querySelector('video');
+    if (containsVideo) {
+      scheduleMutationRefresh('mutation:container');
+      VN.overlay?.requestPosition?.();
+      return;
     }
+
+    if (SITE_VARIANT !== 'youtube') return;
+
+    const ytActionsAppeared = (
+      node.id === 'top-level-buttons-computed' ||
+      node.id === 'actions' ||
+      node.id === 'actions-inner' ||
+      node.matches?.('ytd-watch-metadata, ytd-menu-renderer') ||
+      (node.childElementCount > 0 &&
+        node.querySelector?.('#top-level-buttons-computed, #actions, #actions-inner, ytd-segmented-like-dislike-button-renderer'))
+    );
+    if (ytActionsAppeared) VN.overlay?.requestPosition?.();
   };
 
   const initMutationObserver = () => {
     const observer = new MutationObserver((mutations) => {
       mutations.forEach((mutation) => {
-        if (mutation.type === 'attributes' && mutation.target instanceof HTMLVideoElement) {
-          VN.scheduleRefresh('mutation:attributes');
-          VN.overlay?.requestPosition?.();
+        if (mutation.type === 'attributes') {
+          if (mutation.target instanceof HTMLVideoElement) {
+            scheduleMutationRefresh('mutation:attributes');
+            VN.overlay?.requestPosition?.();
+            return;
+          }
+
+          if (SITE_VARIANT === 'youtube') {
+            const target = mutation.target;
+            if (target instanceof HTMLElement && (
+              target.matches?.('ytd-watch-metadata, ytd-menu-renderer') ||
+              target.closest?.('ytd-watch-metadata, ytd-menu-renderer')
+            )) {
+              VN.overlay?.requestPosition?.();
+            }
+          }
           return;
         }
 
@@ -56,14 +94,16 @@
           processNode(node);
         });
 
-        if (SITE_VARIANT === 'youtube') {
-          const t = mutation.target;
-          if (t && t instanceof HTMLElement) {
-            if (t.matches?.('ytd-watch-metadata, ytd-menu-renderer') || t.querySelector?.('ytd-watch-metadata, ytd-menu-renderer')) {
-              VN.overlay?.requestPosition?.();
-            }
-          }
-        }
+        // Removing the injected SVG does not add a node. Without this, a static
+        // playing page keeps a dangling url(#…) until something else refreshes.
+        mutation.removedNodes.forEach((node) => {
+          if (!(node instanceof Element)) return;
+          const removedFilter = node.hasAttribute('data-video-enhancer-svg') ||
+            (typeof node.id === 'string' && node.id.startsWith('video-enhancer-filter-')) ||
+            (node.childElementCount > 0 &&
+              node.querySelector('[data-video-enhancer-svg], [id^="video-enhancer-filter-"]'));
+          if (removedFilter) scheduleMutationRefresh('mutation:filter-removed');
+        });
       });
     });
 
@@ -74,11 +114,6 @@
       attributeFilter: ['src', 'style', 'class', 'data-player-state']
     });
   };
-
-  // Track initialization state
-  let initPromise = null;
-  let isInitialized = false;
-  let lastToggleTime = 0;
 
   let visibilitySuspended = false;
   const handleVisibilityChange = () => {
@@ -124,8 +159,7 @@
 
   const init = async () => {
     await VN.loadPersistedState();
-    VN.ensureFilter();
-    
+
     // Initialize Overlay - it reads state.overlayEnabled directly
     VN.overlay?.init?.();
 
@@ -142,47 +176,52 @@
 
   // Listen for messages from popup/background
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
-    chrome.runtime.onMessage.addListener((message) => {
-      if (message && message.type === 'VIDEO_ENHANCER_TOGGLE_PANEL') {
-        // Only the top frame should toggle the panel; otherwise each iframe can
-        // toggle in quick succession causing an open/close "flash".
-        let isTopFrame = true;
-        try { isTopFrame = window.top === window; } catch (_) { isTopFrame = true; }
+    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+      if (!message || message.type !== 'VIDEO_ENHANCER_TOGGLE_PANEL') return;
 
-        if (!isTopFrame) {
-          VN.requestPanelToggleFromFrame?.();
-          return;
+      // Acknowledge delivery synchronously. Without this, the callback-form
+      // sender sees "The message port closed..." and background.js treats a
+      // successful toggle as a missing receiver, re-injecting every frame.
+      if (typeof sendResponse === 'function') sendResponse({ ok: true });
+
+      // Only the top frame should toggle the panel; otherwise each iframe can
+      // toggle in quick succession causing an open/close "flash".
+      let isTopFrame = true;
+      try { isTopFrame = window.top === window; } catch (_) { isTopFrame = true; }
+
+      if (!isTopFrame) {
+        VN.requestPanelToggleFromFrame?.();
+        return;
+      }
+
+      // Debounce rapid toggles to prevent flashing
+      const now = Date.now();
+      if (now - lastToggleTime < 300) {
+        return;
+      }
+      lastToggleTime = now;
+
+      // Ensure init completes before handling panel toggle
+      const handleToggle = () => {
+        const state = getState();
+        if (!state) return;
+
+        // Toggle panel visibility
+        const newVisible = !state.panelVisible;
+
+        if (typeof VN.panel?.setVisible === 'function') {
+          VN.panel.setVisible(newVisible);
         }
+      };
 
-        // Debounce rapid toggles to prevent flashing
-        const now = Date.now();
-        if (now - lastToggleTime < 300) {
-          return;
-        }
-        lastToggleTime = now;
-
-        // Ensure init completes before handling panel toggle
-        const handleToggle = () => {
-          const state = getState();
-          if (!state) return;
-          
-          // Toggle panel visibility
-          const newVisible = !state.panelVisible;
-          
-          if (typeof VN.panel?.setVisible === 'function') {
-            VN.panel.setVisible(newVisible);
-          }
-        };
-
-        if (isInitialized) {
-          handleToggle();
-        } else if (initPromise) {
-          // Wait for init to complete so we have the correct persisted state
-          initPromise.then(handleToggle).catch(() => handleToggle());
-        } else {
-          // Shouldn't happen, but handle gracefully
-          handleToggle();
-        }
+      if (isInitialized) {
+        handleToggle();
+      } else if (initPromise) {
+        // Wait for init to complete so we have the correct persisted state
+        initPromise.then(handleToggle).catch(() => handleToggle());
+      } else {
+        // Shouldn't happen, but handle gracefully
+        handleToggle();
       }
     });
   }

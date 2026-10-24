@@ -24,10 +24,8 @@
   let presetImportButton = null;
   let presetImportFileInput = null;
   let presetIoStatus = null;
-  let presetStatus = null;
   let presetFilterActive = false;
-  let activeSliderValueEditor = null;
-  
+
   const sliderInputs = {
     sharpen: null,
     contrast: null,
@@ -36,7 +34,7 @@
     gamma: null
   };
 
-  const sliderValueLabels = {
+  const sliderValueInputs = {
     sharpen: null,
     contrast: null,
     saturation: null,
@@ -77,7 +75,6 @@
     panelApi.syncUI = () => {};
     panelApi.toggle = () => VN.requestPanelToggleFromFrame?.();
     panelApi.setVisible = panelApi.toggle;
-    panelApi.broadcastState = () => {};
 
     // Per-tab state: iframes don't need state sync from parent
 
@@ -91,8 +88,34 @@
 
   // Utility functions
   const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
-  const formatPercent = (value) => `${Math.round(value * 100)}%`;
+  // The % sits beside the field, so the input itself only holds the number.
+  const formatPercent = (value) => String(Math.round(value * 100));
   const formatSliderValue = (key, value) => key === 'gamma' ? value.toFixed(2) : formatPercent(value);
+
+  // Size the box to the text. Native field-sizing clips the last glyph
+  // (the % sign) once the border is drawn, so measure an offscreen copy.
+  const sliderValueMeasure = document.createElement('span');
+  sliderValueMeasure.setAttribute('aria-hidden', 'true');
+  Object.assign(sliderValueMeasure.style, {
+    position: 'absolute',
+    visibility: 'hidden',
+    whiteSpace: 'pre',
+    pointerEvents: 'none'
+  });
+
+  const fitSliderValueInput = (input) => {
+    if (!input) return;
+    const style = getComputedStyle(input);
+    sliderValueMeasure.style.font = style.font;
+    sliderValueMeasure.style.letterSpacing = style.letterSpacing;
+    sliderValueMeasure.textContent = input.value || input.getAttribute('value') || '';
+    if (!sliderValueMeasure.isConnected) document.documentElement.appendChild(sliderValueMeasure);
+    const textWidth = sliderValueMeasure.getBoundingClientRect().width;
+    const extra = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0)
+      + (parseFloat(style.borderLeftWidth) || 0) + (parseFloat(style.borderRightWidth) || 0);
+    // 1px covers subpixel rounding so the last glyph is not clipped.
+    input.style.width = `${Math.ceil(textWidth + extra + 1)}px`;
+  };
 
   // Per-tab state management: No cross-frame broadcasting needed
 
@@ -111,12 +134,10 @@
     presetImportButton = null;
     presetImportFileInput = null;
     presetIoStatus = null;
-    presetStatus = null;
     presetFilterActive = false;
-    activeSliderValueEditor = null;
     wired = false;
     Object.keys(sliderInputs).forEach((k) => { sliderInputs[k] = null; });
-    Object.keys(sliderValueLabels).forEach((k) => { sliderValueLabels[k] = null; });
+    Object.keys(sliderValueInputs).forEach((k) => { sliderValueInputs[k] = null; });
   };
 
   // =========================================================================
@@ -186,6 +207,7 @@
       panelNode.classList.remove('video-enhancer-hidden');
     } else {
       panelNode.classList.add('video-enhancer-hidden');
+      if (presetDropdown && !presetDropdown.hidden) setPresetDropdownOpen(false);
     }
   };
 
@@ -225,17 +247,17 @@
     if (!state) return;
     
     const sharpenInput = sliderInputs.sharpen;
-    const sharpenLabel = sliderValueLabels.sharpen;
+    const sharpenValue = sliderValueInputs.sharpen;
     const sharpenGroup = sharpenInput?.closest('.video-enhancer-slider-group');
 
-    if (sharpenInput && sharpenLabel && sharpenGroup) {
+    if (sharpenInput && sharpenValue && sharpenGroup) {
       const isDisabled = state.compatibilityMode;
       sharpenInput.disabled = isDisabled;
       sharpenInput.classList.toggle('video-enhancer-disabled', isDisabled);
-      sharpenLabel.classList.toggle('video-enhancer-disabled', isDisabled);
+      sharpenValue.disabled = isDisabled;
+      sharpenValue.classList.toggle('video-enhancer-disabled', isDisabled);
       sharpenGroup.classList.toggle('video-enhancer-disabled', isDisabled);
-      sharpenLabel.tabIndex = isDisabled ? -1 : 0;
-      sharpenLabel.setAttribute('aria-disabled', String(isDisabled));
+      sharpenValue.setAttribute('aria-disabled', String(isDisabled));
     }
   };
 
@@ -250,117 +272,114 @@
       if (Number(input.value) !== sliderValue) {
         input.value = String(sliderValue);
       }
-      const label = sliderValueLabels[key];
-      if (label) {
-        label.textContent = formatSliderValue(key, value);
+      const valueInput = sliderValueInputs[key];
+      if (valueInput && document.activeElement !== valueInput) {
+        valueInput.value = formatSliderValue(key, value);
       }
+      fitSliderValueInput(valueInput);
     });
   };
 
-  const finishSliderValueEdit = (session, shouldCommit, restoreFocus = false) => {
-    if (activeSliderValueEditor !== session) return;
-    activeSliderValueEditor = null;
-
+  const commitSliderValueInput = (key) => {
     const state = getState();
-    const enteredValue = session.editor.value.trim();
-    const value = Number(enteredValue);
-    if (shouldCommit && state && enteredValue && Number.isFinite(value)) {
-      const boundedValue = clamp(value, session.minimum, session.maximum);
-      const steppedValue = session.minimum + Math.round((boundedValue - session.minimum) / session.step) * session.step;
-      const displayValue = Number(steppedValue.toFixed(3));
-      const normalized = session.key === 'gamma' ? displayValue : displayValue / 100;
-      state.settings[session.key] = Number(normalized.toFixed(3));
-      VN.schedulePersist?.(`slider-${session.key}`);
-      if (state.enabled) VN.scheduleRefresh?.(`slider-${session.key}`);
-    }
-
-    syncSliders();
-    session.wrapper.replaceWith(session.label);
-    if (restoreFocus) session.label.focus();
-  };
-
-  const openSliderValueEditor = (key) => {
-    const state = getState();
-    const label = sliderValueLabels[key];
+    const input = sliderValueInputs[key];
     const slider = sliderInputs[key];
-    if (!state || !label || !slider || (key === 'sharpen' && state.compatibilityMode)) return;
-
-    if (activeSliderValueEditor) activeSliderValueEditor.editor.blur();
+    if (!state || !input || !slider || input.disabled) return;
 
     const displayScale = key === 'gamma' ? 1 : 100;
     const minimum = Number(slider.min) / 100 * displayScale;
     const maximum = Number(slider.max) / 100 * displayScale;
     const step = Number(slider.step) / 100 * displayScale;
-    const maxEditorWidth = 32;
-    const wrapper = document.createElement('span');
-    wrapper.className = 'video-enhancer-slider-value-editor-wrap';
-    const editor = document.createElement('input');
-    editor.type = 'text';
-    editor.className = 'video-enhancer-slider-value-editor';
-    editor.inputMode = 'decimal';
-    editor.autocomplete = 'off';
-    editor.value = String(key === 'gamma' ? state.settings[key].toFixed(2) : Math.round(state.settings[key] * 100));
-    editor.setAttribute('aria-label', `Set ${key} value`);
+    const rawValue = input.value.replace(/%/g, '').trim();
+    const numericValue = Number(rawValue);
 
-    wrapper.appendChild(editor);
+    if (!rawValue || !Number.isFinite(numericValue)) {
+      input.value = formatSliderValue(key, state.settings[key]);
+      fitSliderValueInput(input);
+      return;
+    }
 
-    const session = { key, label, editor, wrapper, minimum, maximum, step };
-    activeSliderValueEditor = session;
-    label.replaceWith(wrapper);
+    const boundedValue = clamp(numericValue, minimum, maximum);
+    const steppedValue = minimum + Math.round((boundedValue - minimum) / step) * step;
+    const displayValue = Number(steppedValue.toFixed(3));
+    const normalized = key === 'gamma' ? displayValue : displayValue / 100;
+    const nextValue = Number(normalized.toFixed(3));
 
-    const measureCanvas = document.createElement('canvas');
-    const measureContext = measureCanvas.getContext('2d');
-    const fitEditorToText = () => {
-      if (!measureContext) return;
-      const styles = window.getComputedStyle(editor);
-      measureContext.font = `${styles.fontStyle} ${styles.fontWeight} ${styles.fontSize} ${styles.fontFamily}`;
-      const textWidth = measureContext.measureText(editor.value || '0').width;
-      const padding = Number.parseFloat(styles.paddingLeft) + Number.parseFloat(styles.paddingRight);
-      const fieldWidth = Math.min(maxEditorWidth, Math.max(8, Math.ceil(textWidth + padding)));
-      editor.style.width = `${fieldWidth}px`;
-      editor.style.flexBasis = `${fieldWidth}px`;
-    };
+    if (nextValue === state.settings[key]) {
+      input.value = formatSliderValue(key, state.settings[key]);
+      fitSliderValueInput(input);
+      return;
+    }
 
-    editor.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        finishSliderValueEdit(session, true, true);
-      } else if (event.key === 'Escape') {
-        event.preventDefault();
-        finishSliderValueEdit(session, false, true);
-      }
-    });
-    editor.addEventListener('blur', () => finishSliderValueEdit(session, true), { once: true });
-    editor.addEventListener('input', fitEditorToText);
-    fitEditorToText();
-    editor.focus();
-    editor.select();
+    state.settings[key] = nextValue;
+    input.value = formatSliderValue(key, state.settings[key]);
+    fitSliderValueInput(input);
+    syncSliders();
+    VN.schedulePersist?.(`slider-${key}`);
+    if (state.enabled) VN.scheduleRefresh?.(`slider-${key}`);
+  };
+
+  // Keep the wheel useful on both mouse wheels (one notch = one step) and
+  // trackpads (many small deltas accumulate into one step). At a bound the
+  // event is left alone so the panel itself can scroll.
+  const wheelStates = new WeakMap();
+
+  const wheelDeltaToPixels = (event) => {
+    if (event.deltaMode === 2) return event.deltaY * 100; // DOM_DELTA_PAGE
+    return event.deltaY;
   };
 
   const handleSliderWheel = (key, event) => {
     const slider = sliderInputs[key];
     if (!slider || slider.disabled || event.deltaY === 0) return;
 
-    event.preventDefault();
-    event.stopPropagation();
-    const direction = event.deltaY < 0 ? 1 : -1;
     const step = Number(slider.step) || 1;
     const currentValue = Number(slider.value);
+    const direction = event.deltaY < 0 ? 1 : -1;
     const nextValue = clamp(currentValue + direction * step, Number(slider.min), Number(slider.max));
-    if (nextValue === currentValue) return;
 
-    slider.value = String(nextValue);
-    slider.dispatchEvent(new Event('input', { bubbles: true }));
+    // At a bound, leave the event alone so the panel can scroll.
+    if (nextValue === currentValue) {
+      wheelStates.delete(slider);
+      return;
+    }
+
+    // DOM_DELTA_LINE is one notch. Firefox reports deltaY of ±3, and 3×16 is
+    // 48px, under the pixel threshold, so a focused slider was canceling the
+    // event before it could step. Step on the notch itself.
+    if (event.deltaMode === 1) {
+      event.preventDefault();
+      event.stopPropagation();
+      slider.value = String(nextValue);
+      slider.dispatchEvent(new Event('input', { bubbles: true }));
+      return;
+    }
+
+    const delta = wheelDeltaToPixels(event);
+    if (!delta || typeof VN.nextWheelState !== 'function') return;
+
+    // Keep the gesture on the slider. If the panel scrolls instead, a trackpad
+    // swipe leaves the slider before the movements can add up to one step.
+    // At a bound this returns earlier, so the panel can still scroll there.
+    event.preventDefault();
+    event.stopPropagation();
+
+    const focused = document.activeElement === slider;
+    const result = VN.nextWheelState(wheelStates.get(slider), delta, {
+      now: performance.now(),
+      focused
+    });
+    if (result.state) wheelStates.set(slider, result.state);
+    else wheelStates.delete(slider);
+
+    if (result.step) {
+      slider.value = String(nextValue);
+      slider.dispatchEvent(new Event('input', { bubbles: true }));
+    }
   };
 
   const CHEVRON_ICON = '<svg width="10" height="6" viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   const DELETE_ICON = '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 2l6 6M8 2l-6 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
-
-  const setPresetStatus = (message, isError = false) => {
-    if (!presetStatus) return;
-    presetStatus.textContent = message;
-    presetStatus.classList.toggle('video-enhancer-preset-status-error', isError);
-  };
 
   // Save is disabled until there is a name, and at the 50-preset limit it only
   // allows saving over an existing preset.
@@ -459,18 +478,22 @@
       }));
       let added = 0;
       let updated = 0;
+      const touchedPresetIds = [];
       importedPresets.forEach((importedPreset) => {
         const existing = mergedPresets.find((preset) =>
           preset.name.toLocaleLowerCase() === importedPreset.name.toLocaleLowerCase()
         );
         if (existing) {
           existing.settings = importedPreset.settings;
+          touchedPresetIds.push(existing.id);
           updated += 1;
         } else if (mergedPresets.length < 50) {
-          mergedPresets.push({
+          const created = {
             id: `preset-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             ...importedPreset
-          });
+          };
+          mergedPresets.push(created);
+          touchedPresetIds.push(created.id);
           added += 1;
         } else {
           skipped += 1;
@@ -478,10 +501,20 @@
       });
 
       state.settings = importedSettings;
-      if (typeof payload.enabled === 'boolean') state.enabled = payload.enabled;
-      if (typeof payload.compatibilityMode === 'boolean') state.compatibilityMode = payload.compatibilityMode;
-      if (typeof payload.overlayEnabled === 'boolean') state.overlayEnabled = payload.overlayEnabled;
+      if (typeof payload.enabled === 'boolean') {
+        state.enabled = payload.enabled;
+        VN.notePersistField?.('enabled');
+      }
+      if (typeof payload.compatibilityMode === 'boolean') {
+        state.compatibilityMode = payload.compatibilityMode;
+        VN.notePersistField?.('compatibilityMode');
+      }
+      if (typeof payload.overlayEnabled === 'boolean') {
+        state.overlayEnabled = payload.overlayEnabled;
+        VN.notePersistField?.('overlayEnabled');
+      }
       state.presets = mergedPresets;
+      touchedPresetIds.forEach((id) => VN.notePresetUpsert?.(id));
       syncUI();
       VN.schedulePersist?.('settings-import');
       if (state.enabled) VN.scheduleRefresh?.('settings-import');
@@ -495,9 +528,27 @@
     }
   };
 
+  // The panel is a scrollport, so the menu cannot be allowed to extend past its
+  // visible padding box. Size it to the space actually available and open
+  // upward when the area below the field is too short.
+  const positionPresetDropdown = () => {
+    if (!presetDropdown || !presetControl || !panelNode || presetDropdown.hidden) return;
+    const panelRect = panelNode.getBoundingClientRect();
+    const comboRect = presetControl.getBoundingClientRect();
+    const gap = 12;
+    const spaceBelow = panelRect.bottom - gap - comboRect.bottom;
+    const spaceAbove = comboRect.top - panelRect.top - gap;
+    const openUp = spaceBelow < 140 && spaceAbove > spaceBelow;
+    const available = Math.max(60, Math.min(180, openUp ? spaceAbove : spaceBelow));
+
+    presetDropdown.classList.toggle('video-enhancer-preset-menu-up', openUp);
+    presetDropdown.style.maxHeight = `${Math.round(available)}px`;
+  };
+
   const updatePresetOptions = () => {
     if (!presetDropdown) return;
     const state = getState();
+
     const query = presetFilterActive ? (presetInput?.value.trim().toLocaleLowerCase() || '') : '';
     const presets = (state?.presets || []).filter((preset) =>
       preset.name.toLocaleLowerCase().includes(query)
@@ -533,17 +584,37 @@
       presetDropdown.appendChild(row);
     });
 
+    if (!presets.length) {
+      const empty = document.createElement('div');
+      empty.className = 'video-enhancer-preset-empty';
+      empty.setAttribute('role', 'menuitem');
+      empty.setAttribute('aria-disabled', 'true');
+      empty.textContent = state?.presets?.length ? 'No matching presets' : 'No presets saved yet';
+      presetDropdown.appendChild(empty);
+    }
+
     if (!presetDropdown.childElementCount && !presetDropdown.hidden) setPresetDropdownOpen(false);
     updateSaveButton();
+    if (!presetDropdown.hidden) positionPresetDropdown();
   };
 
   const setPresetDropdownOpen = (isOpen) => {
     if (!presetDropdown || !presetDropdownButton) return;
     const shouldShow = Boolean(isOpen && presetDropdown.childElementCount);
+    const focusWasInside = presetDropdown.contains(document.activeElement);
+
     presetDropdown.hidden = !shouldShow;
     presetControl?.classList.toggle('video-enhancer-preset-open', shouldShow);
     presetDropdownButton.setAttribute('aria-expanded', String(shouldShow));
     presetInput?.setAttribute('aria-expanded', String(shouldShow));
+
+    if (shouldShow) {
+      positionPresetDropdown();
+    } else {
+      presetDropdown.classList.remove('video-enhancer-preset-menu-up');
+      presetDropdown.style.removeProperty('max-height');
+      if (focusWasInside) presetInput?.focus();
+    }
   };
 
   // Main UI sync function - updates all UI elements to match state
@@ -581,6 +652,9 @@
     if (!state) return;
     
     const normalized = tabName === 'custom' ? 'custom' : 'preset';
+    if (normalized !== 'custom' && presetDropdown && !presetDropdown.hidden) {
+      setPresetDropdownOpen(false);
+    }
     if (state.activeTab !== normalized) {
       state.activeTab = normalized;
       VN.schedulePersist?.('tab-change');
@@ -601,7 +675,6 @@
     }
     
     VN.schedulePersist?.('main-toggle');
-    
     // Apply or remove filter
     if (newEnabled) {
       VN.scheduleRefresh?.('main-toggle');
@@ -645,9 +718,10 @@
     const normalized = rawValue / 100;
     state.settings[key] = Number(normalized.toFixed(3));
     
-    const label = sliderValueLabels[key];
-    if (label) {
-      label.textContent = formatSliderValue(key, state.settings[key]);
+    const valueInput = sliderValueInputs[key];
+    if (valueInput && document.activeElement !== valueInput) {
+      valueInput.value = formatSliderValue(key, state.settings[key]);
+      fitSliderValueInput(valueInput);
     }
     
     VN.schedulePersist?.(`slider-${key}`);
@@ -670,14 +744,12 @@
     const name = presetInput?.value.trim().slice(0, 40) || '';
     if (!state) return;
     if (!name) {
-      setPresetStatus('Enter a preset name first.', true);
       presetInput?.focus();
       return;
     }
 
     const existing = state.presets.find((preset) => preset.name.toLocaleLowerCase() === name.toLocaleLowerCase());
     if (!existing && state.presets.length >= 50) {
-      setPresetStatus('Preset limit reached (50). Delete one before saving a new preset.', true);
       updateSaveButton();
       return;
     }
@@ -691,11 +763,11 @@
     preset.name = name;
     preset.settings = settings;
     if (!existing) state.presets.push(preset);
+    VN.notePresetUpsert?.(preset.id);
 
     presetFilterActive = false;
     updatePresetOptions();
     setPresetDropdownOpen(false);
-    setPresetStatus(`Saved "${name}".`);
     VN.schedulePersist?.('preset-save');
     if (savePresetButton) {
       savePresetButton.classList.add('video-enhancer-saved');
@@ -716,7 +788,6 @@
     updatePresetOptions();
     setPresetDropdownOpen(false);
     syncUI();
-    setPresetStatus('');
     presetInput?.focus();
     VN.schedulePersist?.('preset-apply');
     if (state.enabled) VN.scheduleRefresh?.('preset-apply');
@@ -728,10 +799,7 @@
     const preset = state.presets.find((item) => item.id === presetId);
     if (!preset) return;
 
-    try {
-      if (!window.confirm(`Delete preset "${preset.name}"?`)) return;
-    } catch (_) {}
-
+    VN.notePresetDelete?.(presetId);
     state.presets = state.presets.filter((item) => item.id !== presetId);
     if (presetInput?.value.trim().toLocaleLowerCase() === preset.name.toLocaleLowerCase()) {
       presetInput.value = '';
@@ -739,7 +807,6 @@
     }
     updatePresetOptions();
     setPresetDropdownOpen(keepDropdownOpen);
-    setPresetStatus('');
     if (keepDropdownOpen) presetInput?.focus();
     VN.schedulePersist?.('preset-delete');
   };
@@ -782,6 +849,7 @@
     }
     panelNode?.classList.remove('video-enhancer-dragging');
     VN.schedulePersist?.('panel-position');
+    if (presetDropdown && !presetDropdown.hidden) positionPresetDropdown();
   };
 
   // =========================================================================
@@ -804,7 +872,6 @@
     presetImportButton = panelNode.querySelector('#video-enhancer-import-settings');
     presetImportFileInput = panelNode.querySelector('#video-enhancer-import-file');
     presetIoStatus = panelNode.querySelector('#video-enhancer-preset-io-status');
-    presetStatus = panelNode.querySelector('#video-enhancer-preset-status');
 
     sliderInputs.sharpen = panelNode.querySelector('#video-enhancer-custom-sharpen');
     sliderInputs.contrast = panelNode.querySelector('#video-enhancer-custom-contrast');
@@ -812,20 +879,38 @@
     sliderInputs.brightness = panelNode.querySelector('#video-enhancer-custom-brightness');
     sliderInputs.gamma = panelNode.querySelector('#video-enhancer-custom-gamma');
 
-    sliderValueLabels.sharpen = panelNode.querySelector('#video-enhancer-custom-sharpen-value');
-    sliderValueLabels.contrast = panelNode.querySelector('#video-enhancer-custom-contrast-value');
-    sliderValueLabels.saturation = panelNode.querySelector('#video-enhancer-custom-saturation-value');
-    sliderValueLabels.brightness = panelNode.querySelector('#video-enhancer-custom-brightness-value');
-    sliderValueLabels.gamma = panelNode.querySelector('#video-enhancer-custom-gamma-value');
+    sliderValueInputs.sharpen = panelNode.querySelector('#video-enhancer-custom-sharpen-value');
+    sliderValueInputs.contrast = panelNode.querySelector('#video-enhancer-custom-contrast-value');
+    sliderValueInputs.saturation = panelNode.querySelector('#video-enhancer-custom-saturation-value');
+    sliderValueInputs.brightness = panelNode.querySelector('#video-enhancer-custom-brightness-value');
+    sliderValueInputs.gamma = panelNode.querySelector('#video-enhancer-custom-gamma-value');
 
-    Object.entries(sliderValueLabels).forEach(([key, label]) => {
-      label?.addEventListener('dblclick', () => openSliderValueEditor(key));
-      label?.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
+    Object.entries(sliderValueInputs).forEach(([key, input]) => {
+      if (!input) return;
+      input.addEventListener('dblclick', () => {
+        input.setSelectionRange(0, input.value.length);
+      });
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
           event.preventDefault();
-          openSliderValueEditor(key);
+          // Blur commits the value and leaves the field. Do not move focus to
+          // the slider, which would highlight it after every Enter.
+          input.blur();
+        } else if (event.key === 'Escape') {
+          event.preventDefault();
+          const state = getState();
+          if (state) {
+            input.value = formatSliderValue(key, state.settings[key]);
+            fitSliderValueInput(input);
+          }
         }
       });
+      input.addEventListener('input', () => fitSliderValueInput(input));
+      input.addEventListener('blur', () => {
+        commitSliderValueInput(key);
+        fitSliderValueInput(input);
+      });
+      fitSliderValueInput(input);
     });
 
     // Tab buttons. Inactive tabs have tabindex=-1, so arrow-key handling is
@@ -914,10 +999,10 @@
         event.target.value = '';
       });
     });
-    // Typing only names a preset; the list opens from the chevron (filtering if already open)
+    // Typing only names a preset; the list opens from the chevron (filtering if
+    // already open) or from ArrowDown (which opens the full list).
     presetInput?.addEventListener('input', () => {
       presetFilterActive = true;
-      setPresetStatus('');
       updatePresetOptions();
     });
     // Keep focus in the input while clicking the chevron or menu rows
@@ -936,11 +1021,46 @@
         handleSavePreset();
       } else if (event.key === 'ArrowDown') {
         event.preventDefault();
-        updatePresetOptions();
+        if (presetDropdown?.hidden) {
+          presetFilterActive = false;
+          updatePresetOptions();
+        }
         setPresetDropdownOpen(true);
         presetDropdown?.querySelector('.video-enhancer-preset-option')?.focus();
       } else if (event.key === 'Escape') {
         setPresetDropdownOpen(false);
+      }
+    });
+    presetDropdown?.addEventListener('keydown', (event) => {
+      const rows = Array.from(presetDropdown.querySelectorAll('.video-enhancer-preset-item'));
+      if (!rows.length) return;
+
+      const currentRow = document.activeElement?.closest?.('.video-enhancer-preset-item') || null;
+      const currentIndex = currentRow ? rows.indexOf(currentRow) : -1;
+      const focusRow = (row, selector) => {
+        row?.querySelector(selector)?.focus();
+      };
+
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        const delta = event.key === 'ArrowDown' ? 1 : -1;
+        const nextIndex = currentIndex < 0
+          ? 0
+          : (currentIndex + delta + rows.length) % rows.length;
+        focusRow(rows[nextIndex], '.video-enhancer-preset-option');
+      } else if (event.key === 'Home' || event.key === 'End') {
+        event.preventDefault();
+        focusRow(event.key === 'Home' ? rows[0] : rows[rows.length - 1], '.video-enhancer-preset-option');
+      } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+        if (!currentRow) return;
+        event.preventDefault();
+        focusRow(currentRow, event.key === 'ArrowLeft'
+          ? '.video-enhancer-preset-option'
+          : '.video-enhancer-preset-delete');
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        setPresetDropdownOpen(false);
+        presetInput?.focus();
       }
     });
     presetControl?.addEventListener('focusout', () => {
@@ -954,6 +1074,14 @@
       }, true);
       presetDismissListenerInstalled = true;
     }
+
+    // The menu is sized against the panel's visible area; a panel scroll makes
+    // that stale, so close it (unless keyboard focus is inside the menu).
+    panelNode.addEventListener('scroll', () => {
+      if (!presetDropdown || presetDropdown.hidden) return;
+      if (presetDropdown.contains(document.activeElement)) return;
+      setPresetDropdownOpen(false);
+    }, { passive: true });
 
     // Sliders
     sliderInputs.sharpen?.addEventListener('input', (e) => handleSliderInput('sharpen', e));
@@ -994,45 +1122,44 @@
           <div class="video-enhancer-preset-row-layout">
             <div class="video-enhancer-preset-combo">
               <input id="video-enhancer-preset-input" type="text" maxlength="40" aria-labelledby="video-enhancer-preset-title" autocomplete="off" spellcheck="false" aria-controls="video-enhancer-preset-dropdown" aria-expanded="false" />
-              <button id="video-enhancer-preset-dropdown-toggle" type="button" class="video-enhancer-preset-chevron" tabindex="-1" aria-label="Show saved presets" aria-haspopup="menu" aria-controls="video-enhancer-preset-dropdown" aria-expanded="false">${CHEVRON_ICON}</button>
+              <button id="video-enhancer-preset-dropdown-toggle" type="button" class="video-enhancer-preset-chevron" aria-label="Show saved presets" aria-haspopup="menu" aria-controls="video-enhancer-preset-dropdown" aria-expanded="false">${CHEVRON_ICON}</button>
               <div id="video-enhancer-preset-dropdown" class="video-enhancer-preset-menu" role="menu" aria-label="Saved presets" hidden></div>
             </div>
             <button id="video-enhancer-save-preset" type="button" class="video-enhancer-secondary-button video-enhancer-preset-save" disabled>Save</button>
           </div>
-          <div id="video-enhancer-preset-status" class="video-enhancer-preset-status" role="status" aria-live="polite"></div>
         </div>
         <div class="video-enhancer-slider-group">
           <div class="video-enhancer-slider-label">
             <label for="video-enhancer-custom-sharpen">Sharpen</label>
-            <span id="video-enhancer-custom-sharpen-value" class="video-enhancer-slider-value" role="button" tabindex="0" title="Double-click to enter a specific value" aria-label="Edit sharpen value">30%</span>
+            <span class="video-enhancer-slider-value-wrap"><input id="video-enhancer-custom-sharpen-value" class="video-enhancer-slider-value" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" title="Click to edit; double-click to select the value" aria-label="Sharpen percent" value="30" /><span class="video-enhancer-slider-unit" aria-hidden="true">%</span></span>
           </div>
           <input id="video-enhancer-custom-sharpen" type="range" min="0" max="150" step="1" value="30" />
         </div>
         <div class="video-enhancer-slider-group">
           <div class="video-enhancer-slider-label">
             <label for="video-enhancer-custom-contrast">Contrast</label>
-            <span id="video-enhancer-custom-contrast-value" class="video-enhancer-slider-value" role="button" tabindex="0" title="Double-click to enter a specific value" aria-label="Edit contrast value">110%</span>
+            <span class="video-enhancer-slider-value-wrap"><input id="video-enhancer-custom-contrast-value" class="video-enhancer-slider-value" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" title="Click to edit; double-click to select the value" aria-label="Contrast percent" value="100" /><span class="video-enhancer-slider-unit" aria-hidden="true">%</span></span>
           </div>
-          <input id="video-enhancer-custom-contrast" type="range" min="50" max="200" step="1" value="110" />
+          <input id="video-enhancer-custom-contrast" type="range" min="50" max="200" step="1" value="100" />
         </div>
         <div class="video-enhancer-slider-group">
           <div class="video-enhancer-slider-label">
             <label for="video-enhancer-custom-saturation">Saturation</label>
-            <span id="video-enhancer-custom-saturation-value" class="video-enhancer-slider-value" role="button" tabindex="0" title="Double-click to enter a specific value" aria-label="Edit saturation value">110%</span>
+            <span class="video-enhancer-slider-value-wrap"><input id="video-enhancer-custom-saturation-value" class="video-enhancer-slider-value" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" title="Click to edit; double-click to select the value" aria-label="Saturation percent" value="115" /><span class="video-enhancer-slider-unit" aria-hidden="true">%</span></span>
           </div>
-          <input id="video-enhancer-custom-saturation" type="range" min="50" max="200" step="1" value="110" />
+          <input id="video-enhancer-custom-saturation" type="range" min="50" max="200" step="1" value="115" />
         </div>
         <div class="video-enhancer-slider-group">
           <div class="video-enhancer-slider-label">
             <label for="video-enhancer-custom-brightness">Brightness</label>
-            <span id="video-enhancer-custom-brightness-value" class="video-enhancer-slider-value" role="button" tabindex="0" title="Double-click to enter a specific value" aria-label="Edit brightness value">100%</span>
+            <span class="video-enhancer-slider-value-wrap"><input id="video-enhancer-custom-brightness-value" class="video-enhancer-slider-value" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" title="Click to edit; double-click to select the value" aria-label="Brightness percent" value="100" /><span class="video-enhancer-slider-unit" aria-hidden="true">%</span></span>
           </div>
           <input id="video-enhancer-custom-brightness" type="range" min="50" max="200" step="1" value="100" />
         </div>
         <div class="video-enhancer-slider-group">
           <div class="video-enhancer-slider-label">
             <label for="video-enhancer-custom-gamma">Gamma</label>
-            <span id="video-enhancer-custom-gamma-value" class="video-enhancer-slider-value" role="button" tabindex="0" title="Double-click to enter a specific value" aria-label="Edit gamma value">1.10</span>
+            <span class="video-enhancer-slider-value-wrap"><input id="video-enhancer-custom-gamma-value" class="video-enhancer-slider-value" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" title="Click to edit; double-click to select the value" aria-label="Gamma value" value="1.10" /></span>
           </div>
           <input id="video-enhancer-custom-gamma" type="range" min="50" max="200" step="1" value="110" />
         </div>
@@ -1146,22 +1273,12 @@
     syncUI();
   };
 
+  // SPA navigation hooks. Reassigning history.pushState here cannot intercept
+  // the page's own calls (content scripts run in an isolated world), so listen
+  // for real navigation events instead.
   const installSpaHooks = () => {
     if (spaHooksInstalled) return;
     spaHooksInstalled = true;
-
-    const wrap = (fn) => function() {
-      const result = fn.apply(this, arguments);
-      onUrlChange();
-      return result;
-    };
-
-    if (typeof history.pushState === 'function') {
-      history.pushState = wrap(history.pushState);
-    }
-    if (typeof history.replaceState === 'function') {
-      history.replaceState = wrap(history.replaceState);
-    }
 
     const events = ['popstate', 'yt-navigate-finish', 'yt-page-data-updated', 'yt-navigate-start'];
     events.forEach((evt) => window.addEventListener(evt, onUrlChange));
@@ -1174,10 +1291,18 @@
   fullscreenEvents.forEach((evt) => document.addEventListener(evt, () => {
     ensurePanelHost();
     if (getState()?.panelVisible) applyPanelPosition();
+    if (presetDropdown && !presetDropdown.hidden) {
+      if (getFullscreenElement() instanceof HTMLVideoElement) {
+        setPresetDropdownOpen(false);
+      } else {
+        positionPresetDropdown();
+      }
+    }
   }, true));
 
   window.addEventListener('resize', () => {
     if (getState()?.panelVisible) applyPanelPosition();
+    if (presetDropdown && !presetDropdown.hidden) positionPresetDropdown();
   });
 
   // Watchdog to recover panel if DOM is removed (e.g., by page scripts)

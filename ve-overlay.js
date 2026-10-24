@@ -47,6 +47,11 @@
 
   const isFullscreen = () => Boolean(getFullscreenElement());
 
+  // A native <video> fullscreen element paints only itself. Controls left outside
+  // that tree are not shown, but they stay keyboard-focusable if a later
+  // reposition shows them again.
+  const isNativeVideoFullscreen = () => getFullscreenElement() instanceof HTMLVideoElement;
+
   const clearOverlayIdleTimer = () => {
     if (overlayIdleTimer) clearTimeout(overlayIdleTimer);
     overlayIdleTimer = null;
@@ -62,6 +67,11 @@
     overlayIdleHidden = false;
     overlayIdleTimer = setTimeout(() => {
       overlayIdleTimer = null;
+      if (hasOverlayKeyboardFocus()) {
+        // Don't hide (and inert) controls a keyboard user is interacting with.
+        scheduleOverlayIdleHide();
+        return;
+      }
       overlayIdleHidden = true;
       updateHoverState();
     }, FULLSCREEN_IDLE_TIMEOUT_MS);
@@ -119,17 +129,25 @@
     btn.style.setProperty('border-color', 'transparent', 'important');
   };
 
-  // Hide the overlay completely
+  // Hide the overlay completely. A transient "no video in view" frame must not
+  // forget that fullscreen idle mode (or a YouTube player) was already active,
+  // otherwise the next position pass treats it as a new fullscreen entry and
+  // shows the controls again without input.
   const hideOverlay = () => {
-    clearOverlayIdleTimer();
-    overlayIdleHidden = false;
-    fullscreenWasActive = false;
-    fullscreenWasUsingYoutubeControls = false;
-    if (youtubeControlsObserver) {
-      youtubeControlsObserver.disconnect();
-      youtubeControlsObserver = null;
+    const resetFullscreenState = !isFullscreen() || !shouldShowOverlay();
+
+    if (resetFullscreenState) {
+      clearOverlayIdleTimer();
+      overlayIdleHidden = false;
+      fullscreenWasActive = false;
+      fullscreenWasUsingYoutubeControls = false;
+      if (youtubeControlsObserver) {
+        youtubeControlsObserver.disconnect();
+        youtubeControlsObserver = null;
+      }
+      youtubePlayerElement = null;
     }
-    youtubePlayerElement = null;
+
     if (!overlayContainer) return;
     overlayContainer.style.visibility = 'hidden';
     setOverlayInteractive(false);
@@ -159,15 +177,16 @@
     return true;
   }
 
-  // Get the largest visible video element
-  function getPrimaryVideo() {
+  // Get the largest visible video element. Callers that already scanned the
+  // document can pass the video list to avoid a duplicate DOM walk.
+  function getPrimaryVideo(videos = VN.collectVideos()) {
     const min = getMinTargetSize();
     const minArea = min.w * min.h;
     let best = null;
     let bestArea = 0;
     let bestIsPlaying = false;
 
-    const candidates = VN.collectVideos().map((video) => {
+    const candidates = videos.map((video) => {
       const player = video.closest('.html5-video-player');
       return { video, player, target: player || video };
     });
@@ -203,6 +222,13 @@
   // Keep the container out of the tab order and accessibility tree when hidden.
   const setOverlayInteractive = (visible) => {
     if (!overlayContainer) return;
+    if (!visible) {
+      const activeElement = document.activeElement;
+      if (activeElement instanceof HTMLElement && overlayContainer.contains(activeElement)) {
+        // Never leave focus on an element that is about to become inert.
+        activeElement.blur();
+      }
+    }
     overlayContainer.style.opacity = visible ? '1' : '0';
     overlayContainer.style.pointerEvents = visible ? 'auto' : 'none';
     overlayContainer.setAttribute('aria-hidden', String(!visible));
@@ -212,9 +238,22 @@
     });
   };
 
+  // Mouse clicks focus buttons too; only keyboard-visible focus should keep the
+  // hover controls pinned open after the pointer leaves.
+  const hasOverlayKeyboardFocus = () => {
+    const activeElement = document.activeElement;
+    if (!overlayContainer || !(activeElement instanceof HTMLElement) ||
+        !overlayContainer.contains(activeElement)) return false;
+    try {
+      return activeElement.matches(':focus-visible');
+    } catch (_) {
+      return false;
+    }
+  };
+
   // Update hover state (show/hide based on mouse position over video)
   const updateHoverState = () => {
-    if (!overlayContainer || !shouldShowOverlay() || !lastVideoRect) {
+    if (!overlayContainer || !shouldShowOverlay() || !lastVideoRect || isNativeVideoFullscreen()) {
       hideOverlay();
       return;
     }
@@ -226,24 +265,30 @@
     const youtubeControlsVisible = !youtubePlayerElement ||
       !youtubePlayerElement.isConnected ||
       !youtubePlayerElement.classList.contains('ytp-autohide');
-    const visible = inside && youtubeControlsVisible &&
-      !(isFullscreen() && !youtubePlayerElement && overlayIdleHidden);
+    // Keep the controls up while they contain keyboard focus, even if the
+    // pointer is elsewhere; a mouse-click focus should not pin them open.
+    const hasFocus = hasOverlayKeyboardFocus();
+    const visible = hasFocus || (inside && youtubeControlsVisible &&
+      !(isFullscreen() && !youtubePlayerElement && overlayIdleHidden));
     setOverlayInteractive(visible);
   };
 
   // Position the overlay relative to the primary video
-  const positionOverlay = () => {
-    // If disabled or no container, hide and bail
-    if (!overlayContainer || !shouldShowOverlay()) {
+  const positionOverlay = (primary = null) => {
+    // Scroll, resize, and video mutations call this directly. The native-video
+    // fullscreen guard in ensureOverlay is not enough on its own.
+    if (!overlayContainer || !shouldShowOverlay() || isNativeVideoFullscreen()) {
       lastVideoRect = null;
       hideOverlay();
       return;
     }
 
-    const best = getPrimaryVideo();
+    const best = primary || getPrimaryVideo();
     if (!best) {
       lastVideoRect = null;
-      watchYoutubePlayer(null);
+      // Keep watching the last player through transient no-video frames; the
+      // next successful position replaces it. Clearing it here would mistake
+      // the gap for leaving YouTube and arm the non-YouTube idle timer.
       handleFullscreenMode();
       hideOverlay();
       return;
@@ -359,7 +404,7 @@
       
       // Sync with panel and persist
       VN.panel?.syncUI?.();
-      VN.schedulePersist?.('overlay-toggle');
+      VN.schedulePersist?.('enabled-toggle');
       
       // Apply or remove filter immediately
       if (newEnabled) {
@@ -399,7 +444,7 @@
   };
 
   // Ensure overlay exists and is properly positioned
-  const ensureOverlay = () => {
+  const ensureOverlay = (primary = null) => {
     if (!shouldShowOverlay()) {
       hideOverlay();
       return;
@@ -416,8 +461,18 @@
       createOverlay();
     }
 
+    // Native video fullscreen only renders the video element itself; fallback
+    // children appended to a <video> are never displayed. Keep the overlay out
+    // of it rather than hiding the controls inside unrendered content.
+    // positionOverlay repeats this guard because scroll and resize skip this path.
+    const fsElement = getFullscreenElement();
+    if (isNativeVideoFullscreen()) {
+      lastVideoRect = null;
+      hideOverlay();
+      return;
+    }
+
     // Fullscreen handling: Move overlay into fullscreen element if needed
-    const fsElement = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement;
     const targetParent = fsElement || document.body || document.documentElement;
     
     if (overlayContainer && overlayContainer.parentElement !== targetParent) {
@@ -431,7 +486,7 @@
     }
 
     updateButtonStyles();
-    positionOverlay();
+    positionOverlay(primary);
   };
 
   // Mouse move handler
@@ -471,31 +526,21 @@
     let attempts = 0;
     pollInterval = setInterval(() => {
       attempts++;
-      if (attempts >= 10 || getPrimaryVideo()) {
+      const primary = getPrimaryVideo();
+      if (attempts >= 10 || primary) {
         clearInterval(pollInterval);
         pollInterval = null;
-        ensureOverlay();
+        ensureOverlay(primary);
       }
     }, 500);
   };
 
-  // Install SPA navigation hooks
+  // Install SPA navigation hooks. Reassigning history.pushState here cannot
+  // intercept the page's own calls (content scripts run in an isolated world),
+  // so listen for real navigation events instead.
   const installSpaHooks = () => {
     if (spaHooksInstalled) return;
     spaHooksInstalled = true;
-
-    const wrap = (fn) => function() {
-      const result = fn.apply(this, arguments);
-      onUrlChange();
-      return result;
-    };
-
-    if (typeof history.pushState === 'function') {
-      history.pushState = wrap(history.pushState);
-    }
-    if (typeof history.replaceState === 'function') {
-      history.replaceState = wrap(history.replaceState);
-    }
 
     const events = ['popstate', 'yt-navigate-finish', 'yt-page-data-updated', 'yt-navigate-start'];
     events.forEach((evt) => window.addEventListener(evt, onUrlChange));
@@ -539,7 +584,7 @@
       if (shouldShowOverlay()) {
         const primary = getPrimaryVideo();
         if (primary) {
-          ensureOverlay();
+          ensureOverlay(primary);
         } else if (overlayContainer && overlayContainer.style.visibility !== 'hidden') {
           hideOverlay();
         }

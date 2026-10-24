@@ -6,12 +6,12 @@ Open source and lightweight video enhancer for Twitch, YouTube, and Kick. Give s
 
 - **Context-aware overlay controls** – hover the primary video to toggle enhancement or open settings. On YouTube, the controls follow YouTube's own controls in windowed and fullscreen playback.
 - **Floating control panel** – drag the panel anywhere, switch between a one-click preset and fully custom sliders for sharpen, contrast, saturation, brightness, and gamma.
-- **Direct slider editing** – double-click a value to enter a specific number, or scroll over a slider to adjust it one unit at a time (0.01 for gamma).
+- **Direct slider editing** – click a value to place the caret and type a specific number, double-click to select the whole number, or scroll over a slider to adjust it one unit at a time (0.01 for gamma).
 - **Saved presets and reset** – save, apply, and delete named slider profiles, or restore the built-in filter defaults.
 - **Settings backup** – export and import settings and saved profiles from the Backup & restore section at the bottom of the Settings tab.
 - **Fullscreen auto-hide** – on other video players, the inline overlay fades after three seconds without mouse or keyboard activity and returns when you interact again.
 - **Responsive to SPA navigation** – the overlay follows you across watch pages and live channels without reloads.
-- **GPU-friendly sharpening** – blends CSS filters with an SVG-based sharpen pass for crisp playback on modern hardware.
+- **SVG-assisted sharpening** – blends CSS filters with an SVG sharpen pass for crisp playback on modern hardware.
 
 ## Downloads
 
