@@ -477,6 +477,78 @@
   // do sync through chrome.storage.onChanged below. A save merges this tab's
   // changes into whatever is already stored, so one tab cannot undo another's.
 
+  // The panel and overlay live in the page, so a site's button and input rules
+  // change their size and font. A shadow root keeps page CSS from reaching them.
+  let uiHost = null;
+  let uiShadow = null;
+  let uiStylePromise = null;
+
+  // Not position:fixed. That would pin the panel to this host instead of the
+  // viewport. Hits still reach the controls: pointer-events is left alone, and
+  // only the controls turn it back on.
+  const UI_HOST_STYLE = [
+    'all: initial',
+    'display: block',
+    'position: static',
+    'width: 0',
+    'height: 0',
+    'margin: 0',
+    'border: 0',
+    'padding: 0',
+    'overflow: visible',
+    'z-index: 2147483646',
+    'font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif'
+  ].join(' !important; ') + ' !important;';
+
+  VN.uiRoot = () => uiShadow;
+
+  // document.activeElement stops at the shadow host. Callers that compare focus
+  // to a panel control need the control itself.
+  VN.activeElement = () => {
+    const outer = document.activeElement;
+    if (outer === uiHost && uiShadow?.activeElement) return uiShadow.activeElement;
+    return outer;
+  };
+
+  VN.mountUi = (parent) => {
+    const fallback = document.body || document.documentElement;
+    const nextParent = parent && parent.isConnected ? parent : fallback;
+    if (!uiHost || !uiShadow) {
+      uiHost = document.createElement('div');
+      uiHost.id = 'video-enhancer-ui-host';
+      uiShadow = uiHost.attachShadow({ mode: 'open' });
+    }
+    uiHost.style.cssText = UI_HOST_STYLE;
+    if (uiHost.parentElement !== nextParent) {
+      try { nextParent.appendChild(uiHost); } catch (_) {
+        try { fallback.appendChild(uiHost); } catch (_) {}
+      }
+    }
+    if (!uiStylePromise && chrome?.runtime?.sendMessage) {
+      // The page cannot fetch chrome-extension:// itself (YouTube blocks it).
+      // Ask the worker for the stylesheet text and apply that inside the shadow root.
+      uiStylePromise = new Promise((resolve) => {
+        try {
+          chrome.runtime.sendMessage({ type: 'VIDEO_ENHANCER_GET_UI_CSS' }, (response) => {
+            void chrome.runtime.lastError;
+            resolve(response?.ok ? response.css : '');
+          });
+        } catch (_) {
+          resolve('');
+        }
+      }).then((css) => {
+        if (!css || uiShadow.querySelector('style[data-video-enhancer-ui]')) return;
+        const style = document.createElement('style');
+        style.dataset.videoEnhancerUi = '';
+        style.textContent = css;
+        uiShadow.appendChild(style);
+      }).catch(() => {
+        uiStylePromise = null;
+      });
+    }
+    return uiShadow;
+  };
+
   // Iframe content scripts cannot safely use window.postMessage to ask the top
   // frame to toggle the panel: any page script can forge that message. Relay the
   // request through the extension service worker instead, which only accepts

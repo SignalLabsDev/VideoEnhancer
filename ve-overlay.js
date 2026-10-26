@@ -223,7 +223,7 @@
   const setOverlayInteractive = (visible) => {
     if (!overlayContainer) return;
     if (!visible) {
-      const activeElement = document.activeElement;
+      const activeElement = typeof VN.activeElement === 'function' ? VN.activeElement() : document.activeElement;
       if (activeElement instanceof HTMLElement && overlayContainer.contains(activeElement)) {
         // Never leave focus on an element that is about to become inert.
         activeElement.blur();
@@ -241,7 +241,7 @@
   // Mouse clicks focus buttons too; only keyboard-visible focus should keep the
   // hover controls pinned open after the pointer leaves.
   const hasOverlayKeyboardFocus = () => {
-    const activeElement = document.activeElement;
+    const activeElement = typeof VN.activeElement === 'function' ? VN.activeElement() : document.activeElement;
     if (!overlayContainer || !(activeElement instanceof HTMLElement) ||
         !overlayContainer.contains(activeElement)) return false;
     try {
@@ -265,10 +265,14 @@
     const youtubeControlsVisible = !youtubePlayerElement ||
       !youtubePlayerElement.isConnected ||
       !youtubePlayerElement.classList.contains('ytp-autohide');
+    // Hovering these buttons blocks the player underneath. YouTube then
+    // autohides, and hiding with it made the buttons vanish under the pointer.
+    let pointerOverControls = false;
+    try { pointerOverControls = overlayContainer.matches(':hover'); } catch (_) {}
     // Keep the controls up while they contain keyboard focus, even if the
     // pointer is elsewhere; a mouse-click focus should not pin them open.
     const hasFocus = hasOverlayKeyboardFocus();
-    const visible = hasFocus || (inside && youtubeControlsVisible &&
+    const visible = hasFocus || pointerOverControls || (inside && youtubeControlsVisible &&
       !(isFullscreen() && !youtubePlayerElement && overlayIdleHidden));
     setOverlayInteractive(visible);
   };
@@ -440,7 +444,8 @@
 
     overlayContainer.append(toggleButton, settingsButton);
     setOverlayInteractive(false);
-    (document.body || document.documentElement).appendChild(overlayContainer);
+    const root = typeof VN.mountUi === 'function' ? VN.mountUi(document.body || document.documentElement) : null;
+    (root || document.body || document.documentElement).appendChild(overlayContainer);
   };
 
   // Ensure overlay exists and is properly positioned
@@ -472,14 +477,16 @@
       return;
     }
 
-    // Fullscreen handling: Move overlay into fullscreen element if needed
-    const targetParent = fsElement || document.body || document.documentElement;
-    
-    if (overlayContainer && overlayContainer.parentElement !== targetParent) {
+    // Fullscreen only paints the fullscreen element. Move the shared UI host
+    // into it; the overlay itself stays in the shadow root, away from page CSS.
+    const pageParent = fsElement || document.body || document.documentElement;
+    if (typeof VN.mountUi === 'function') {
+      VN.mountUi(pageParent);
+    } else if (overlayContainer && overlayContainer.parentElement !== pageParent) {
       try {
-        targetParent.appendChild(overlayContainer);
+        pageParent.appendChild(overlayContainer);
       } catch (_) {
-        if (targetParent !== document.body) {
+        if (pageParent !== document.body) {
           (document.body || document.documentElement).appendChild(overlayContainer);
         }
       }

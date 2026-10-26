@@ -46,7 +46,29 @@ const ensureContentScriptInjected = async (tabId) => {
 // Iframe overlays and content scripts ask the worker to toggle the top-frame
 // panel. Use runtime messaging instead of window.postMessage so page scripts
 // cannot forge the request.
+let uiCssPromise = null;
+const loadUiCss = () => {
+  if (!uiCssPromise) {
+    uiCssPromise = fetch(chrome.runtime.getURL('contentStyles.css'))
+      .then((response) => response.text())
+      .catch((error) => {
+        uiCssPromise = null;
+        throw error;
+      });
+  }
+  return uiCssPromise;
+};
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // A page cannot fetch an extension URL. The worker can, so it reads the
+  // stylesheet and hands the text back for the shadow root.
+  if (message?.type === 'VIDEO_ENHANCER_GET_UI_CSS') {
+    loadUiCss()
+      .then((css) => sendResponse({ ok: true, css }))
+      .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
+  }
+
   if (message?.type !== 'VIDEO_ENHANCER_TOGGLE_PANEL_FROM_FRAME') return;
 
   const tabId = sender.tab?.id;

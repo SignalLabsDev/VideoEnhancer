@@ -3,12 +3,12 @@
   top: 80px;
   right: 16px;
   width: 280px;
+  pointer-events: auto;
   padding: 16px 18px;
   border-radius: 14px;
   box-shadow: 0 14px 35px rgba(0, 0, 0, 0.38);
   background: rgba(20, 24, 32, 0.95);
   color: #f5f7fa;
-  font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
   z-index: 2147483647;
   backdrop-filter: blur(22px);
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -24,6 +24,20 @@
 
 #video-enhancer-panel.video-enhancer-hidden {
   display: none;
+}
+
+/* The panel lives in the page, so a site's button or input font would otherwise
+   replace ours. !important beats those rules, including another extension's. */
+#video-enhancer-inline-toggle {
+  pointer-events: auto;
+}
+
+#video-enhancer-panel,
+#video-enhancer-panel *,
+#video-enhancer-inline-toggle,
+#video-enhancer-inline-toggle * {
+  font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif !important;
+  text-transform: none !important;
 }
 
 #video-enhancer-panel * {

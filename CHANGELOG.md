@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.2.1 – 2026-10-24
+
+### Fixed
+
+- Keep the panel and overlay out of the page's CSS, so a site cannot change their font, button size, or control styles. Load that stylesheet through the extension, since pages such as YouTube block extension URLs.
+- Keep the overlay buttons visible while the pointer is on them, instead of letting the player hide its controls and taking the buttons with it.
+
 ## 2.2.0 – 2026-10-24
 
 ### Fixed

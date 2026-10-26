@@ -94,6 +94,8 @@
 
   // Size the box to the text. Native field-sizing clips the last glyph
   // (the % sign) once the border is drawn, so measure an offscreen copy.
+  const activeElement = () => (typeof VN.activeElement === 'function' ? VN.activeElement() : document.activeElement);
+
   const sliderValueMeasure = document.createElement('span');
   sliderValueMeasure.setAttribute('aria-hidden', 'true');
   Object.assign(sliderValueMeasure.style, {
@@ -109,7 +111,8 @@
     sliderValueMeasure.style.font = style.font;
     sliderValueMeasure.style.letterSpacing = style.letterSpacing;
     sliderValueMeasure.textContent = input.value || input.getAttribute('value') || '';
-    if (!sliderValueMeasure.isConnected) document.documentElement.appendChild(sliderValueMeasure);
+    const measureRoot = VN.uiRoot?.() || document.documentElement;
+    if (!sliderValueMeasure.isConnected) measureRoot.appendChild(sliderValueMeasure);
     const textWidth = sliderValueMeasure.getBoundingClientRect().width;
     const extra = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0)
       + (parseFloat(style.borderLeftWidth) || 0) + (parseFloat(style.borderRightWidth) || 0);
@@ -188,11 +191,12 @@
 
   const ensurePanelHost = () => {
     if (!panelNode) return;
-    const host = getPanelHost();
-    if (panelNode.parentElement === host) return;
+    const root = typeof VN.mountUi === 'function' ? VN.mountUi(getPanelHost()) : null;
+    const parent = root || getPanelHost();
+    if (panelNode.parentNode === parent) return;
 
     try {
-      host.appendChild(panelNode);
+      parent.appendChild(panelNode);
     } catch (_) {
       try { (document.body || document.documentElement).appendChild(panelNode); } catch (_) {}
     }
@@ -273,7 +277,7 @@
         input.value = String(sliderValue);
       }
       const valueInput = sliderValueInputs[key];
-      if (valueInput && document.activeElement !== valueInput) {
+      if (valueInput && activeElement() !== valueInput) {
         valueInput.value = formatSliderValue(key, value);
       }
       fitSliderValueInput(valueInput);
@@ -364,7 +368,7 @@
     event.preventDefault();
     event.stopPropagation();
 
-    const focused = document.activeElement === slider;
+    const focused = activeElement() === slider;
     const result = VN.nextWheelState(wheelStates.get(slider), delta, {
       now: performance.now(),
       focused
@@ -601,7 +605,7 @@
   const setPresetDropdownOpen = (isOpen) => {
     if (!presetDropdown || !presetDropdownButton) return;
     const shouldShow = Boolean(isOpen && presetDropdown.childElementCount);
-    const focusWasInside = presetDropdown.contains(document.activeElement);
+    const focusWasInside = presetDropdown.contains(activeElement());
 
     presetDropdown.hidden = !shouldShow;
     presetControl?.classList.toggle('video-enhancer-preset-open', shouldShow);
@@ -719,7 +723,7 @@
     state.settings[key] = Number(normalized.toFixed(3));
     
     const valueInput = sliderValueInputs[key];
-    if (valueInput && document.activeElement !== valueInput) {
+    if (valueInput && activeElement() !== valueInput) {
       valueInput.value = formatSliderValue(key, state.settings[key]);
       fitSliderValueInput(valueInput);
     }
@@ -1035,7 +1039,7 @@
       const rows = Array.from(presetDropdown.querySelectorAll('.video-enhancer-preset-item'));
       if (!rows.length) return;
 
-      const currentRow = document.activeElement?.closest?.('.video-enhancer-preset-item') || null;
+      const currentRow = activeElement()?.closest?.('.video-enhancer-preset-item') || null;
       const currentIndex = currentRow ? rows.indexOf(currentRow) : -1;
       const focusRow = (row, selector) => {
         row?.querySelector(selector)?.focus();
@@ -1065,12 +1069,13 @@
     });
     presetControl?.addEventListener('focusout', () => {
       window.setTimeout(() => {
-        if (!presetControl?.contains(document.activeElement)) setPresetDropdownOpen(false);
+        if (!presetControl?.contains(activeElement())) setPresetDropdownOpen(false);
       }, 0);
     });
     if (!presetDismissListenerInstalled) {
       document.addEventListener('pointerdown', (event) => {
-        if (presetControl && !presetControl.contains(event.target)) setPresetDropdownOpen(false);
+        const path = typeof event.composedPath === 'function' ? event.composedPath() : [event.target];
+        if (presetControl && !path.includes(presetControl)) setPresetDropdownOpen(false);
       }, true);
       presetDismissListenerInstalled = true;
     }
@@ -1079,7 +1084,7 @@
     // that stale, so close it (unless keyboard focus is inside the menu).
     panelNode.addEventListener('scroll', () => {
       if (!presetDropdown || presetDropdown.hidden) return;
-      if (presetDropdown.contains(document.activeElement)) return;
+      if (presetDropdown.contains(activeElement())) return;
       setPresetDropdownOpen(false);
     }, { passive: true });
 
@@ -1203,9 +1208,12 @@
       resetDomRefs();
     }
 
-    // Check if panel already exists in DOM (e.g., from previous injection)
+    // A panel left in the page by an older injection is outside the shadow root,
+    // so page CSS can still restyle it. Drop it and build a new one inside.
     if (!panelNode) {
-      panelNode = document.getElementById('video-enhancer-panel');
+      const existing = document.getElementById('video-enhancer-panel');
+      if (existing) existing.remove();
+      panelNode = VN.uiRoot?.()?.getElementById?.('video-enhancer-panel') || null;
     }
 
     // If panel exists and is connected, ensure it's wired and hosted correctly
